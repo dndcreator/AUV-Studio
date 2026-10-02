@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "title": "Story quality: flooded station and divided crowd",
+  "estimated_calls": 18,
+  "input": {
+    "task": "让角色和群体自主处理封锁冲突，形成有因果、有转折且完成收束的一段中文剧情。"
+  },
+  "expected": {
+    "actor_node_ids": ["ning", "qiao", "crowd"],
+    "min_actions": 6,
+    "min_active_actors": 3,
+    "min_unique_action_ratio": 0.8,
+    "require_director_completion": true
+  },
+  "rubric": {
+    "role_consistency": "宁保护弟弟，乔承担封锁责任，乘客群体表现分化而不是变成一个人。",
+    "progression": "每次行动改变局势，冲突不能停留在抒情或重复争论。",
+    "node_autonomy": "行动由角色和群体提出，Director 只审计边界与结束条件。",
+    "continuity": "私有知识、积水时间、闸门限制和先前承诺持续约束后续行动。",
+    "readability": "中文剧情应包含具体对白、动作、群体反应和清晰空间关系。",
+    "closure": "闸门是否开启、谁承担风险以及人群如何行动必须形成可观察结果。"
+  },
+  "workflow": {
+    "id": "eval_story_group_quality",
+    "name": "Eval: Flooded station story",
+    "version": 1,
+    "nodes": [
+      {
+        "id": "director",
+        "type": "director",
+        "position": {"x": 0, "y": 0},
+        "config": {"objective": "只审计连续性、推进和结束条件，不替角色决定。", "gpro_candidates": 1},
+        "inputs": {}
+      },
+      {
+        "id": "ning",
+        "type": "agent",
+        "position": {"x": 240, "y": -140},
+        "config": {
+          "entity_type": "individual",
+          "entity_name": "宁岚",
+          "entity_profile": "急救培训生。她的弟弟困在封锁闸门另一侧，恐惧但行动果断，不愿用陌生人的生命换弟弟。",
+          "role": "被困者家属",
+          "behavior_prompt": "以宁岚的身份用中文行动。你可以请求、试探、冒险、妥协或改变方案，但只能控制自己。给出具体对白和动作，不要代写乔或人群的反应。行动正文控制在180至280个汉字，整个JSON必须完整并尽量不超过450个汉字。",
+          "model": ""
+        },
+        "inputs": {"prompt": "根据当前状态、记忆和你掌握的信息决定是否行动。"}
+      },
+      {
+        "id": "qiao",
+        "type": "agent",
+        "position": {"x": 240, "y": 20},
+        "config": {
+          "entity_type": "individual",
+          "entity_name": "乔峥",
+          "entity_profile": "夜班站务负责人。十二年前因违规开门失去同事，因此严格执行封锁，但不会故意牺牲乘客。",
+          "role": "站务负责人",
+          "behavior_prompt": "以乔峥的身份用中文行动。你负责闸门和现场安全，可以拒绝、解释、下令、验证或承担风险。只能控制自己，不要替其他角色接受方案。行动正文控制在180至280个汉字，整个JSON必须完整并尽量不超过450个汉字。",
+          "model": ""
+        },
+        "inputs": {"prompt": "根据当前状态、记忆和职责决定是否行动。"}
+      },
+      {
+        "id": "crowd",
+        "type": "agent",
+        "position": {"x": 240, "y": 180},
+        "config": {
+          "entity_type": "group",
+          "entity_name": "站台乘客",
+          "entity_profile": "约四十名滞留乘客，包括通勤者、老人和两名受轻伤者；大多数恐慌但不愿踩踏，少数人要求强行开门。",
+          "role": "滞留乘客群体",
+          "behavior_prompt": "用中文表现真实群体反应：主流、少数派、犹豫者、匿名短句和集体行动。不要把四十人写成一个拥有统一内心的人，也不要只总结局势。行动正文控制在220至320个汉字，整个JSON必须完整并尽量不超过500个汉字。",
+          "model": ""
+        },
+        "inputs": {"prompt": "根据可见事件表现群体内部的反应、分化和行动。"}
+      },
+      {
+        "id": "summary_final",
+        "type": "agent",
+        "position": {"x": 520, "y": 0},
+        "config": {
+          "entity_type": "artifact",
+          "entity_name": "剧情记录",
+          "role": "reviewer",
+          "system_prompt": "只把实际发生的行动整理为一段连贯中文剧情，不补写未发生的结局。",
+          "model": ""
+        },
+        "inputs": {"prompt": "整理完整经过、转折、结果和仍未解决的问题。"}
+      }
+    ],
+    "edges": [],
+    "entry_nodes": ["director"],
+    "environment": {
+      "profile": "近未来城市地铁在暴雨中断电，站台只剩应急红灯。",
+      "scenario": "凌晨零点，地下站台开始进水。宁岚听见弟弟从北侧封锁闸门后的维修通道发来断续呼救；乔峥必须阻止乘客涌入可能倒灌的通道。",
+      "time_context": "00:03，预计十二分钟后积水淹没站台低处",
+      "spatial_context": "地下站台、北侧封锁闸门和高处的南端安全楼梯",
+      "facts": [
+        "北侧闸门开启后需要两个人分别压住机械手柄，关闭至少需要四十秒。",
+        "南端楼梯仍可通往高处，但一次只能通过三人。",
+        "维修通道是否已经完全倒灌尚不确定。",
+        "现场没有可以立即抵达的救援队。"
+      ],
+      "constraints": [
+        "任何角色都不能凭空确认不可见区域的情况。",
+        "群体只能基于公开事件和可观察行为反应。",
+        "剧情必须通过角色行动推进，Director 不得代替角色制造解决方案。"
+      ],
+      "context_book": {
+        "token_budget": 900,
+        "entries": [
+          {
+            "id": "ning_private_signal",
+            "title": "宁岚掌握的信号",
+            "content": "宁岚知道弟弟会用三短一长敲击表示自己还能行走；刚才她听到的正是三短一长。",
+            "kind": "knowledge",
+            "visibility": {"scope": "private", "node_ids": ["ning"]},
+            "activation": {"always": true, "keywords": [], "semantic_hint": "", "related_entry_ids": []},
+            "priority": 95
+          },
+          {
+            "id": "qiao_private_release",
+            "title": "乔峥掌握的机械限制",
+            "content": "乔峥知道可以只抬起闸门到一人匍匐通过的高度，但这样两名压柄者会被固定在原地，无法同时撤离。",
+            "kind": "knowledge",
+            "visibility": {"scope": "private", "node_ids": ["qiao"]},
+            "activation": {"always": true, "keywords": [], "semantic_hint": "", "related_entry_ids": []},
+            "priority": 95
+          }
+        ]
+      },
+      "simulation": {
+        "mode": "roleplay",
+        "execution_model": "continuous",
+        "detail_granularity": "detailed",
+        "horizon_rounds": 4,
+        "max_actions": 8,
+        "director_interval_rounds": 1,
+        "output_contract": {"format": "scene", "min_items": 6, "max_items": 8, "unit": "action"},
+        "task_contract": {
+          "objective": "让封锁冲突通过角色与群体的自主行动演化成明确结果。",
+          "process_type": "distributed dramatic simulation",
+          "deliverable": "中文现实主义剧情，每个行动用180至320个汉字呈现具体对白、动作或群体变化，并优先保证JSON完整",
+          "completion_condition": "闸门处理方案已经执行，乘客群体开始采取对应行动，并产生可观察后果。"
+        }
+      }
+    }
+  }
+}

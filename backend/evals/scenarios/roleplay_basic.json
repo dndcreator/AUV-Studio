@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "title": "Office disagreement: deadline versus quality",
+  "estimated_calls": 10,
+  "input": {
+    "task": "Let the two participants autonomously handle the disagreement and reach a concrete next state."
+  },
+  "expected": {
+    "actor_node_ids": ["lin", "chen"],
+    "min_actions": 3,
+    "min_active_actors": 2,
+    "min_unique_action_ratio": 0.75,
+    "require_director_completion": true
+  },
+  "rubric": {
+    "role_consistency": "Lin protects quality and Chen protects the deadline without becoming caricatures.",
+    "progression": "The disagreement produces concrete decisions, concessions, or consequences.",
+    "node_autonomy": "Actors initiate their own actions; Director only audits continuity and episode boundaries.",
+    "continuity": "Later actions preserve established facts and emotional state.",
+    "readability": "Actions include specific dialogue or behavior rather than abstract summaries."
+  },
+  "workflow": {
+    "id": "eval_roleplay_basic",
+    "name": "Eval: Office disagreement",
+    "version": 1,
+    "nodes": [
+      {
+        "id": "director",
+        "type": "director",
+        "position": {"x": 0, "y": 0},
+        "config": {"objective": "Audit continuity and stop only after the disagreement creates a concrete next state.", "gpro_candidates": 1},
+        "inputs": {}
+      },
+      {
+        "id": "lin",
+        "type": "agent",
+        "position": {"x": 240, "y": -100},
+        "config": {
+          "entity_type": "individual",
+          "entity_name": "Lin Ya",
+          "entity_profile": "Senior designer. Calm but exhausted. She believes releasing the current version will damage user trust and her professional reputation.",
+          "role": "product designer",
+          "behavior_prompt": "Act as Lin Ya. Decide independently whether to speak, negotiate, refuse, propose a compromise, or change course. Use concrete dialogue and observable behavior. Do not narrate Chen's private thoughts. Keep this turn to one complete scene beat and keep the entire JSON response under 220 English words.",
+          "model": ""
+        },
+        "inputs": {"prompt": "Respond to the current shared state according to your own goals and memory."}
+      },
+      {
+        "id": "chen",
+        "type": "agent",
+        "position": {"x": 240, "y": 120},
+        "config": {
+          "entity_type": "individual",
+          "entity_name": "Chen Mo",
+          "entity_profile": "Product manager. Responsible for a public launch tomorrow morning. He fears another delay will lose the only available sales window.",
+          "role": "product manager",
+          "behavior_prompt": "Act as Chen Mo. Decide independently whether to pressure, explain, bargain, assign work, concede, or change course. Use concrete dialogue and observable behavior. Do not narrate Lin's private thoughts. Keep this turn to one complete scene beat and keep the entire JSON response under 220 English words.",
+          "model": ""
+        },
+        "inputs": {"prompt": "Respond to the current shared state according to your own goals and memory."}
+      },
+      {
+        "id": "summary_final",
+        "type": "agent",
+        "position": {"x": 520, "y": 0},
+        "config": {
+          "entity_type": "organization",
+          "entity_name": "Outcome recorder",
+          "role": "reviewer",
+          "system_prompt": "Record only the concrete outcome established by the simulation. Do not invent missing events.",
+          "model": ""
+        },
+        "inputs": {"prompt": "Give a concise final account of what changed, what remains unresolved, and the immediate next step."}
+      }
+    ],
+    "edges": [],
+    "entry_nodes": ["director"],
+    "environment": {
+      "profile": "A small software company under launch pressure.",
+      "scenario": "At 20:40 in a nearly empty office, Lin discovers a serious onboarding flaw. Chen insists the public launch is scheduled for 09:00 tomorrow.",
+      "time_context": "20:40, the night before launch",
+      "spatial_context": "Open-plan office and an adjacent meeting room",
+      "facts": [
+        "The launch is publicly scheduled for 09:00 tomorrow.",
+        "The onboarding flaw is reproducible but does not affect existing users.",
+        "Only Lin and one engineer are still in the office."
+      ],
+      "constraints": [
+        "No participant may invent a completed fix without performing or assigning concrete work.",
+        "Keep private thoughts private unless expressed through observable behavior or dialogue."
+      ],
+      "glossary": {},
+      "simulation": {
+        "mode": "roleplay",
+        "execution_model": "continuous",
+        "detail_granularity": "detailed",
+        "horizon_rounds": 3,
+        "max_actions": 4,
+        "director_interval_rounds": 1,
+        "output_contract": {"format": "scene", "min_items": 3, "max_items": 4, "unit": "action"},
+        "task_contract": {
+          "objective": "Allow the conflict to evolve through autonomous decisions into a concrete next state.",
+          "process_type": "distributed role simulation",
+          "deliverable": "one concrete 80-160 word scene beat per action, followed by a factual outcome",
+          "completion_condition": "A launch decision or actionable compromise exists."
+        }
+      }
+    }
+  }
+}

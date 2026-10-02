@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "title": "World Book and distributed-node long-horizon retention",
+  "turns": 60,
+  "max_context_tokens": 2400,
+  "nodes": [
+    {"id": "mara", "name": "Mara", "role": "operations lead", "profile": "Coordinates evacuation and preserves public safety commitments."},
+    {"id": "ivo", "name": "Ivo", "role": "courier", "profile": "Acts only on information personally available to him."},
+    {"id": "sen", "name": "Sen", "role": "analyst", "profile": "Checks evidence and challenges unsupported conclusions."},
+    {"id": "harbor_crowd", "name": "Harbor crowd", "role": "group", "entity_type": "group", "profile": "Represents aggregate public reactions."}
+  ],
+  "environment": {
+    "profile": "A harbor district preparing for a storm evacuation.",
+    "scenario": "The team must preserve old commitments through sixty changing intervals.",
+    "time_context": "One storm night",
+    "spatial_context": "Harbor district",
+    "context_book": {
+      "token_budget": 900,
+      "entries": [
+        {"id": "amber_protocol", "title": "Amber Protocol", "content": "AMBER-2 requires two named signatures before any evacuation gate may be changed.", "kind": "rule", "visibility": {"scope": "global", "node_ids": []}, "activation": {"always": true, "keywords": [], "semantic_hint": "", "related_entry_ids": []}, "priority": 90},
+        {"id": "ivo_private_route", "title": "Ivo private route", "content": "ORCHID-17 is Ivo's private fallback route through the bell tower.", "kind": "knowledge", "visibility": {"scope": "private", "node_ids": ["ivo"]}, "activation": {"always": true, "keywords": [], "semantic_hint": "", "related_entry_ids": []}, "priority": 95},
+        {"id": "bell_weather", "title": "Bell tower weather limit", "content": "BELL-9: the bell-tower stairs become unsafe after the third storm warning.", "kind": "fact", "visibility": {"scope": "global", "node_ids": []}, "activation": {"always": false, "keywords": ["bell tower"], "semantic_hint": "", "related_entry_ids": []}, "priority": 80}
+      ]
+    }
+  },
+  "timeline": [
+    {"turn": 1, "event": "Mara opens the briefing while the north gate remains available.", "active_nodes": ["mara", "sen"], "writes": [
+      {"id": "north_gate_pledge", "node_id": "mara", "kind": "character", "content": "Mara made PLEDGE-NORTH: she will not close the north gate before confirming the clinic convoy has crossed."},
+      {"id": "clinic_requirement", "scope": "global", "kind": "fact", "content": "The clinic convoy must report crossing before the north gate can be closed."}
+    ]},
+    {"turn": 20, "event": "A warehouse alarm distracts the district, but the clinic crossing remains unconfirmed.", "active_nodes": ["sen", "harbor_crowd"]},
+    {"turn": 40, "event": "Flooding reaches the bell tower during the third storm warning.", "active_nodes": ["ivo", "sen"], "writes": [
+      {"id": "third_warning", "scope": "global", "kind": "state", "content": "The third storm warning is active."}
+    ]},
+    {"turn": 60, "event": "Pressure rises to close the north gate; the clinic convoy is still unconfirmed.", "active_nodes": ["mara", "sen"]}
+  ],
+  "probes": [
+    {"id": "sen_midpoint", "turn": 20, "node_id": "sen", "question": "State the applicable rule and whether the north gate may close.", "required_terms": ["AMBER-2", "clinic convoy"], "forbidden_terms": ["ORCHID-17"], "required_background_ids": ["amber_protocol"], "forbidden_background_ids": ["bell_weather", "ivo_private_route"], "required_memory_ids": ["clinic_requirement"]},
+    {"id": "ivo_late_route", "turn": 40, "node_id": "ivo", "question": "Evaluate your fallback route under the current warning.", "required_terms": ["ORCHID-17", "BELL-9", "third storm warning"], "forbidden_terms": ["PLEDGE-NORTH"], "required_background_ids": ["amber_protocol", "ivo_private_route", "bell_weather"], "required_memory_ids": ["third_warning"]},
+    {"id": "mara_final_commitment", "turn": 60, "node_id": "mara", "question": "Decide whether to close the north gate and identify the old commitment and rule.", "required_terms": ["PLEDGE-NORTH", "AMBER-2", "clinic convoy"], "forbidden_terms": ["ORCHID-17"], "required_background_ids": ["amber_protocol"], "forbidden_background_ids": ["bell_weather", "ivo_private_route"], "required_memory_ids": ["north_gate_pledge", "clinic_requirement"]},
+    {"id": "crowd_privacy", "turn": 60, "node_id": "harbor_crowd", "question": "Describe the crowd reaction using only public facts.", "required_terms": ["clinic convoy"], "forbidden_terms": ["ORCHID-17", "PLEDGE-NORTH"], "required_background_ids": ["amber_protocol"], "forbidden_background_ids": ["bell_weather", "ivo_private_route"], "required_memory_ids": ["clinic_requirement"]}
+  ]
+}
