@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..schemas import WorkflowDefinition, WorkflowNode
+from .dynamic_state import compact_dynamic_state
 from .entity_contracts import entity_action_contract
 
 
@@ -98,6 +99,7 @@ def build_shared_state_view(state: dict[str, Any], recent_actions: list[dict[str
         "current_phase": current_phase,
         "shared_context": str(state.get("shared_context", ""))[-2400:],
         "world_state": state.get("world_state", {}),
+        "dynamic_state": compact_dynamic_state(state.get("dynamic_state", {})),
         "recent_actions": recent_actions[-8:],
     }
 
@@ -240,4 +242,5 @@ def parse_director_control(content: str, *, default_guidance: str = "") -> dict[
         "guidance": str(value.get("guidance") or default_guidance).strip(),
         "reason": str(value.get("reason") or "").strip(),
         "shared_state_summary": str(value.get("shared_state_summary") or "").strip(),
+        "state_patch": value.get("state_patch", {}) if isinstance(value.get("state_patch", {}), dict) else {},
     }

@@ -60,15 +60,23 @@
 5. Memory
 - SQLite 轻量记忆表
 - 自动写入与下游注入
+- Full Log、事实记忆和角色记忆保存可追溯历史；它们不充当当前世界的权威状态。
 
-6. Context Book
+6. Dynamic State Coder
+- 连续模拟使用固定的最小元协议和运行时动态概念，不预设感情、阵营、研究假设等领域字段。
+- State Coder复用 Director阶段审计，批量读取尚未编码的节点行动并返回 `schema_ops + state_ops`，不增加独立的 State Coder调用；最终轮始终执行一次边界审计以避免遗漏尾部状态。
+- 新概念必须说明持续性与未来相关性；程序层限制总概念数、单实体概念数、每轮新增数、值深度和历史长度。
+- 普通节点只收到全局概念与属于自己的私有概念；路由器和前端事件不接收私有概念内容。
+- 所有接受和拒绝的 Patch均进入 `dynamic_state_updated` 事件，支持来源追溯与回滚快照。
+
+7. Context Book
 - `environment.context_book` 保存模拟开始前成立的背景、规则、观点、传言、假设与方法。
 - 每个场景生成稳定的 Context Pack，转段时刷新，节点行动时按可见范围过滤。
 - Context Book 不保存运行中发生的事件；动态变化分别进入 world state、fact memory 和 character memory。
 - Evidence 保留原始来源与研究资料，不自动转化为无来源的背景事实。
 - 内置节点只接收自身可见条目；外接 Agent 默认不接收 Context Book。
 
-7. Evaluation
+8. Evaluation
 - `app/evaluation/` 提供固定场景加载、预算 Provider、规则评分和独立的长程依赖检查点构建。
 - `app/execution/entity_contracts.py` 在后端定义最小实体行为契约，保证导入、自动生成和手动创建的节点不依赖前端默认提示词才能保持个体、群体、组织、环境、事件和物体语义。
 - `app.eval_runner` 在独立内存数据库中运行真实模型 Eval，不污染产品数据。
@@ -105,7 +113,8 @@ AUV continuous execution is mode-neutral. Roleplay scenes, research stages, cons
 1. An AI semantic router reads the compact shared context and node definitions, then activates only nodes relevant to the next episode.
 2. Each activated node reads the shared context plus its own role state and memory, and autonomously emits an action or proposal.
 3. Public changes are appended to a compact natural-language shared state; private changes remain in that node's rolling character/state memory.
-4. Director does not author node decisions. It audits episode boundaries and returns only `continue`, `transition`, or `stop`, plus a compact shared-state summary.
-5. Every activation, node action, and boundary audit remains traceable in SQLite events and can participate in rollback.
+4. During the existing boundary audit, a separate State Coder output dynamically creates, updates, or retires only concepts that can constrain future behavior.
+5. Director does not author node decisions. It audits episode boundaries and returns only `continue`, `transition`, or `stop`, plus a compact shared-state summary.
+6. Every activation, node action, state patch, and boundary audit remains traceable in SQLite events and can participate in rollback.
 
 The engine hard-codes only the protocol envelope. Relevance, proposals, semantic state summaries, and phase meaning remain model-decided; there are no roleplay keyword tables or domain-specific routing rules.

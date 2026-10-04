@@ -3,6 +3,30 @@
 本文件用于持续记录 AUV 的产品能力、接口、前端入口和重要实现决策，避免后续遗忘上下文。
 
 ## [Unreleased]
+### Dynamic State Coder
+
+- Added a domain-neutral dynamic state layer that discovers runtime concepts instead of predefining narrative, research, relationship, or task fields.
+- Reused Director boundary-audit inference to produce a separate `state_patch`, avoiding a dedicated State Coder call and guaranteeing one final boundary audit for uncoded tail actions.
+- Added generic `upsert`, `retire`, `set`, and `unset` operations with schema and value versioning.
+- Added counterfactual future-relevance requirements plus global, per-owner, per-round, value-size, and history budgets to prevent indiscriminate state growth.
+- Added source-node provenance, confidence, retention policy, accepted/rejected operation traces, and `dynamic_state_updated` events.
+- Isolated private concepts so ordinary nodes receive only global state and their own private state; semantic routing and public frontend events receive global concepts only.
+- Enabled dynamic state by default for all continuous simulations, including existing workflows, while allowing an explicit `dynamic_state.enabled=false` opt-out and preserving DAG compatibility.
+- Added a compact Current State view to Advanced monitoring without exposing new user configuration.
+- Added unit and real-engine-path coverage for concept discovery, rejection, budgets, visibility isolation, parsing fallback, event tracing, and zero extra model calls.
+
+### Frontend Capability Integration
+
+- Replaced the oversized welcome banner with a compact studio status rail for model readiness, simulation mode, entity scale, World Book entries, run state, and event count.
+- Connected status items directly to model setup, advanced mode controls, and the global environment inspector without adding new navigation layers.
+- Removed the inaccessible legacy creation step and its duplicated simulation settings; Create now contains only Director, manual entity building, and templates.
+- Extracted the entity palette and studio status rail from the frontend root component, reducing further growth of `App.tsx`.
+- Upgraded preset entity cards with distinct type codes, current canvas counts, and clearer add affordances while retaining the existing yellow-TV visual language.
+- Corrected the right drawer identity so Inspector and Advanced no longer present the same heading and status context.
+- Localized environment, edge interaction, and fallback node configuration labels through the existing runtime language selection.
+- Added focused frontend regression coverage for status-rail routing and entity creation.
+- Split React Flow, React Query, and i18n dependencies into cacheable production chunks to reduce the main application bundle.
+
 ### Long-Horizon Dependency Evaluation
 
 - Added an opt-in 60-turn evaluation for World Book activation, private visibility, durable node memory, distributed participation, and context-budget stability.

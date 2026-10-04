@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..schemas import WorkflowDefinition, WorkflowNode
+from .dynamic_state import init_dynamic_state
 from .output_utils import output_text
 def init_simulation_state(workflow: WorkflowDefinition) -> dict[str, Any]:
     environment = workflow.environment.model_dump()
@@ -56,6 +57,14 @@ def init_simulation_state(workflow: WorkflowDefinition) -> dict[str, Any]:
     world_state_raw = raw.get("world_state", {})
     if not isinstance(world_state_raw, dict):
         world_state_raw = {}
+    dynamic_state_config = raw.get("dynamic_state", {})
+    if not isinstance(dynamic_state_config, dict):
+        dynamic_state_config = {}
+    if "enabled" not in dynamic_state_config:
+        dynamic_state_config = {
+            **dynamic_state_config,
+            "enabled": str(raw.get("execution_model", "")).strip().lower() == "continuous",
+        }
     return {
         "version": int(raw.get("version", 1) or 1),
         "mode": str(raw.get("mode", "simulation")),
@@ -85,6 +94,7 @@ def init_simulation_state(workflow: WorkflowDefinition) -> dict[str, Any]:
             "active_events": world_state_raw.get("active_events", []) if isinstance(world_state_raw.get("active_events", []), list) else [],
         },
         "timeline": [],
+        "dynamic_state": init_dynamic_state(dynamic_state_config),
         "state_memory": {
             "version": 1,
             "current_states": {

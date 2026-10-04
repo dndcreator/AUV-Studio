@@ -94,7 +94,9 @@ export type RunEvent = {
     | "stop_requested"
     | "stopped"
     | "nodes_activated"
-    | "episode_audited";
+    | "episode_audited"
+    | "dynamic_state_updated"
+    | "dynamic_state_failed";
   timestamp: string;
   duration_ms?: number | null;
   payload: Record<string, unknown>;

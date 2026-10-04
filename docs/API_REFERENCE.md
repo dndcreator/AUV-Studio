@@ -128,10 +128,12 @@
 ## 6. 关键返回状态
 
 - Run 状态：`pending | running | waiting_human | stopping | stopped | succeeded | failed`
-- Event 类型：`queued | running | waiting_human | human_resumed | director_overridden | director_corrected | director_vote_started | director_vote_cast | director_vote_finished | nodes_activated | episode_audited | context_pack_activated | stop_requested | stopped | succeeded | failed | skipped`
+- Event 类型：`queued | running | waiting_human | human_resumed | director_overridden | director_corrected | director_vote_started | director_vote_cast | director_vote_finished | nodes_activated | episode_audited | context_pack_activated | dynamic_state_updated | dynamic_state_failed | stop_requested | stopped | succeeded | failed | skipped`
   - `nodes_activated`：AI 语义路由为当前阶段选择了相关自治节点。
   - `episode_audited`：Director 在节点完成提案后审计继续、转段或结束，不代替节点作出内容决策。
   - `context_pack_activated`：记录运行开始或转段时激活的背景条目、原因和估算 Token。
+  - `dynamic_state_updated`：记录动态概念 Schema 与状态 Patch 的版本、来源及接受/拒绝结果；公共事件只包含全局可见概念。
+  - `dynamic_state_failed`：状态维护失败但节点行动已保留，运行可继续。
 - Event 负载包含 `_trace`：
   - `trace_id`
   - `parent_event_ids`

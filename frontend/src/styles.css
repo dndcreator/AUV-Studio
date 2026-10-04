@@ -3554,6 +3554,271 @@ body,
   filter: saturate(1.08) contrast(1.03);
 }
 
+/* Integrated studio shell: compact status, canvas-first hierarchy. */
+.brand-subtitle {
+  margin-top: 5px;
+  color: rgba(255, 246, 173, 0.72);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+}
+
+.studio-status-rail {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: minmax(180px, 1.35fr) repeat(5, minmax(104px, 0.7fr));
+  gap: 0;
+  margin: 14px 0 12px;
+  border: 4px solid #080806;
+  background: #080806;
+  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.82);
+  transform: rotate(-0.18deg);
+}
+
+.status-rail-brand,
+.status-rail-item {
+  min-width: 0;
+  min-height: 62px;
+  border: 0;
+  border-right: 3px solid #080806;
+  background: #fff5b0;
+  color: #080806;
+}
+
+.status-rail-brand {
+  display: grid;
+  grid-template-columns: 14px auto;
+  grid-template-rows: 1fr 1fr;
+  align-items: end;
+  padding: 10px 16px;
+  background: #ffe100;
+}
+
+.status-rail-signal {
+  grid-row: 1 / 3;
+  align-self: stretch;
+  width: 8px;
+  background: #ff3f2f;
+  box-shadow: 4px 0 0 #080806;
+  animation: signal-pulse 1.8s steps(2, end) infinite;
+}
+
+.status-rail-brand strong {
+  font-size: 24px;
+  font-weight: 1000;
+  line-height: 0.9;
+  letter-spacing: -0.08em;
+}
+
+.status-rail-brand small {
+  font-size: 8px;
+  font-weight: 1000;
+  letter-spacing: 0.13em;
+}
+
+.status-rail-item {
+  position: relative;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  padding: 8px 12px;
+  text-align: left;
+  font: inherit;
+}
+
+button.status-rail-item {
+  cursor: pointer;
+}
+
+button.status-rail-item:hover,
+button.status-rail-item:focus-visible {
+  z-index: 1;
+  outline: 0;
+  background: #ffe100;
+  box-shadow: inset 0 -5px 0 #ff3f2f;
+}
+
+.status-rail-item span,
+.status-rail-item small {
+  overflow: hidden;
+  color: rgba(8, 8, 6, 0.62);
+  font-size: 9px;
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status-rail-item strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 1000;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status-rail-item.attention {
+  background: #ff6b3d;
+}
+
+.status-rail-item.run-state-running,
+.status-rail-item.run-state-queued,
+.status-rail-item.run-state-pending {
+  background: #ffe100;
+}
+
+.status-rail-item.run-state-failed {
+  background: #ff4b2b;
+  color: #fff8ce;
+}
+
+.status-rail-item.run-state-succeeded {
+  background: #77e46b;
+}
+
+.entity-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 82px;
+  padding: 13px 13px 11px 24px;
+}
+
+.entity-card::after {
+  display: none;
+}
+
+.entity-card-code {
+  grid-row: 1 / 3;
+  min-width: 40px;
+  padding: 7px 5px;
+  border: 3px solid #080806;
+  background: var(--entity-accent);
+  color: #080806;
+  font-size: 10px;
+  font-weight: 1000;
+  text-align: center;
+  box-shadow: 3px 3px 0 #080806;
+}
+
+.entity-card .node-card-title {
+  align-self: end;
+  padding-left: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.entity-card-count {
+  align-self: start;
+  color: rgba(8, 8, 6, 0.56);
+  font-size: 10px;
+  font-weight: 1000;
+}
+
+.entity-card-add {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  font-size: 28px;
+  font-weight: 1000;
+  line-height: 1;
+}
+
+@keyframes signal-pulse {
+  50% { opacity: 0.35; }
+}
+
+@media (max-width: 1080px) {
+  .studio-status-rail {
+    grid-template-columns: minmax(150px, 1.2fr) repeat(5, minmax(86px, 0.7fr));
+  }
+
+  .status-rail-brand small {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .studio-status-rail {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: hidden;
+  }
+
+  .status-rail-brand,
+  .status-rail-item {
+    min-height: 52px;
+    border-bottom: 3px solid #080806;
+  }
+
+  .status-rail-brand {
+    grid-column: span 1;
+  }
+
+  .status-rail-brand strong {
+    font-size: 19px;
+  }
+}
+
+.dynamic-state-panel {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 9px;
+  border: 3px solid #080806;
+  background: rgba(255, 244, 166, 0.84);
+  box-shadow: 4px 4px 0 #080806;
+}
+
+.dynamic-state-head,
+.dynamic-state-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.dynamic-state-head {
+  padding-bottom: 6px;
+  border-bottom: 3px solid #080806;
+  font-size: 11px;
+  font-weight: 1000;
+  text-transform: uppercase;
+}
+
+.dynamic-state-row {
+  grid-template-columns: minmax(88px, 0.75fr) minmax(0, 1.4fr) auto;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.48);
+  font-size: 11px;
+}
+
+.dynamic-state-row > span {
+  overflow: hidden;
+  font-weight: 1000;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.dynamic-state-row > strong {
+  overflow: hidden;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dynamic-state-row > small {
+  padding: 2px 5px;
+  background: #080806;
+  color: #ffe100;
+  font-weight: 1000;
+}
+
 .react-flow__node-default.entity-flow-node {
   min-width: 172px;
   max-width: 220px;

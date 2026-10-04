@@ -16,6 +16,13 @@ from ..schemas import RunRequest, WorkflowDefinition, WorkflowEdge, WorkflowNode
 from .nodes import HumanInterventionRequired, execute_node, resolve_inputs
 from .provider import OpenAICompatibleProvider
 from .context_book import activation_trace, build_scene_context_pack, context_for_node, environment_for_runtime
+from .dynamic_state import (
+    apply_dynamic_state_proposal,
+    compact_dynamic_state,
+    dynamic_state_enabled,
+    simulation_state_for_node,
+    state_coder_audit_clause,
+)
 from .simulation_loop import (
     activation_instruction,
     action_instruction,
@@ -1039,6 +1046,7 @@ class WorkflowEngine:
         guidance = ""
         director_override_cursor = 0
         activation_cursor = 0
+        state_coder_cursor = 0
 
         stop_requested = False
         action_index = 0
@@ -1106,8 +1114,9 @@ class WorkflowEngine:
                     if not node_uses_external_runtime
                     else {"episode": context.get("_context_pack", {}).get("episode", 0), "estimated_tokens": 0, "entries": []}
                 )
+                node_simulation_state = simulation_state_for_node(context.get("_simulation", {}), node.id)
                 context_packet = build_context_packet(
-                    state=context.get("_simulation", {}),
+                    state=node_simulation_state,
                     memories=memories,
                     recent_actions=recent_actions,
                     director_guidance=guidance,
@@ -1124,7 +1133,7 @@ class WorkflowEngine:
                     "_environment": context.get("_runtime_environment", {}),
                     "_context_pack": node_context_pack,
                     "_memory": memories,
-                    "_simulation": context.get("_simulation", {}),
+                    "_simulation": node_simulation_state,
                     "_global_guidance": guidance,
                 }
                 output, _, success_seq, last_event_hash = await self._execute_continuous_node(
@@ -1223,19 +1232,26 @@ class WorkflowEngine:
                 boundary_votes > 0
                 or round_index % policy.director_interval_rounds == 0
                 or action_index >= policy.max_actions
+                or round_index >= policy.max_rounds
             )
             if director is not None and should_audit:
+                simulation_state = context.get("_simulation", {})
+                state_coder_active = isinstance(simulation_state, dict) and dynamic_state_enabled(simulation_state)
+                uncoded_actions = recent_actions[state_coder_cursor:] if state_coder_active else []
+                state_coder_prompt = state_coder_audit_clause(uncoded_actions) if uncoded_actions else ""
                 control_prompt = (
                     "Audit the boundary of this distributed process episode. Nodes own decisions and actions; do not "
                     "invent their actions, conclusions, plot, or research findings. Decide whether the current episode "
                     "should continue, transition to a new macro episode, or stop. This protocol applies to simulation, "
                     "research, collaboration, and roleplay. Return JSON only: "
                     '{"decision":"continue|transition|stop","guidance":"short boundary constraint only",'
-                    '"reason":"brief audit reason","shared_state_summary":"compact natural-language public state"}. '
+                    '"reason":"brief audit reason","shared_state_summary":"compact natural-language public state",'
+                    '"state_patch":{"schema_ops":[],"state_ops":[]}}. '
                     "The shared state summary may confirm only outcomes supported by participant outputs or existing state; "
                     "keep unsupported effect claims explicitly uncertain. "
                     f"Do not stop before {policy.min_actions_before_stop} actions unless continuation is impossible. "
                     f"Hard limit is {policy.max_actions}.\n\n"
+                    f"{state_coder_prompt}"
                     f"Current macro state:\n{json.dumps(context.get('_simulation', {}), ensure_ascii=False, default=str)}\n\n"
                     f"Autonomous node outputs:\n{json.dumps(recent_actions[-12:], ensure_ascii=False, default=str)}"
                 )
@@ -1250,12 +1266,40 @@ class WorkflowEngine:
                     context["_global_guidance"] = guidance
                 if control["shared_state_summary"]:
                     context["_simulation"]["shared_context"] = control["shared_state_summary"][:4000]
+                if state_coder_active and uncoded_actions:
+                    source_ids = list(
+                        dict.fromkeys(str(item.get("node_id", "")) for item in uncoded_actions if item.get("node_id"))
+                    )
+                    next_dynamic_state, coder_result = apply_dynamic_state_proposal(
+                        context["_simulation"].get("dynamic_state", {}),
+                        control["state_patch"],
+                        seq=simulation_seq,
+                        source_node_ids=source_ids,
+                    )
+                    context["_simulation"]["dynamic_state"] = next_dynamic_state
+                    state_coder_cursor = len(recent_actions)
+                    _, last_event_hash = self._emit_event(
+                        db,
+                        run.id,
+                        "state_coder",
+                        "dynamic_state_updated",
+                        {"round": round_index, **coder_result, "dynamic_state": compact_dynamic_state(next_dynamic_state)},
+                        caused_by="director_state_coder",
+                        context_snapshot={
+                            "round": round_index,
+                            "version": coder_result["version"],
+                            "schema_version": coder_result["schema_version"],
+                            "source_node_ids": source_ids,
+                        },
+                        prev_hash=last_event_hash,
+                    )
+                audit_payload = {key: value for key, value in control.items() if key != "state_patch"}
                 _, last_event_hash = self._emit_event(
                     db,
                     run.id,
                     "director_console",
                     "episode_audited",
-                    {"round": round_index, **control},
+                    {"round": round_index, **audit_payload},
                     caused_by="simulation_director_control",
                     prev_hash=last_event_hash,
                 )

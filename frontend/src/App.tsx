@@ -17,12 +17,14 @@ import { api } from "./api";
 import { buildGlimpseRows, type GlimpseRow } from "./glimpse";
 import { Topbar } from "./components/Topbar";
 import { StudioDock } from "./components/StudioDock";
+import { StudioStatusRail } from "./components/StudioStatusRail";
+import { EntityPalette } from "./components/EntityPalette";
 import { ModelConfigModal } from "./components/ModelConfigModal";
 import { MediaStudio } from "./components/MediaStudio";
 import { ProjectLibraryModal } from "./components/ProjectLibraryModal";
 import { normalizeModelProvider } from "./modelProviders";
 import { defaultEdgeInteraction, useSelectedStore, useWorkflowStore } from "./store";
-import { entityDefinitions } from "./simulationEntities";
+import { isEntityType, type EntityType } from "./simulationEntities";
 import type { Lang, RoleCard, UiMode } from "./appTypes";
 import {
   EdgeInteractionPanel,
@@ -37,6 +39,7 @@ import {
   findRoleCardForNode,
   formatMs,
   formatRatio,
+  formatDynamicStateValue,
   getModeVisibility,
   parseRoleCards,
   parseSimulationSemantics,
@@ -139,7 +142,7 @@ export default function App() {
   const [showLiveTranscript, setShowLiveTranscript] = useState(false);
   const [showRunResults, setShowRunResults] = useState(false);
   const [activeStudioPanel, setActiveStudioPanel] = useState<"create" | "inspect" | "advanced" | null>(null);
-  const [createStep, setCreateStep] = useState<"auto" | "roles" | "manual" | "templates">("auto");
+  const [createStep, setCreateStep] = useState<"auto" | "manual" | "templates">("auto");
   const [showDirectorBubble, setShowDirectorBubble] = useState(false);
   const [directorPosition, setDirectorPosition] = useState(() => {
     try {
@@ -215,6 +218,18 @@ export default function App() {
   const selectedSpec = nodeSpecs[selectedNodeType];
   const maxSeq = useMemo(() => events.reduce((m, e) => Math.max(m, Number(e.seq ?? 0)), 0), [events]);
   const eventCount = events.length;
+  const entityCounts = useMemo(() => {
+    const counts: Partial<Record<EntityType, number>> = {};
+    for (const node of nodes) {
+      const config = ((node.data as Record<string, unknown>)?.config ?? {}) as Record<string, unknown>;
+      if (isEntityType(config.entity_type)) {
+        counts[config.entity_type] = (counts[config.entity_type] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }, [nodes]);
+  const entityCount = useMemo(() => Object.values(entityCounts).reduce((sum, count) => sum + (count ?? 0), 0), [entityCounts]);
+  const backgroundCount = workflow.environment.context_book?.entries?.filter((entry) => entry.enabled).length ?? 0;
   const visibleEvents = useMemo(() => {
     if (timelineSeq <= 0) {
       return events;
@@ -1256,29 +1271,23 @@ export default function App() {
         </div>
       ) : null}
 
-      <section className="mission-strip">
-        <div className="mission-copy">
-          <span className="eyebrow">{copy("AUV 频道正在待机", "AUV Channel Standby")}</span>
-          <h1>{copy("调到你的模拟频道", "Tune Into Your Simulation")}</h1>
-        </div>
-        <div className="mission-cards">
-          <button className="mission-card accent" onClick={() => setShowModelConfig(true)}>
-            <span>{copy("模型", "Model")}</span>
-            <strong>{modelConfig && (!modelConfig.requires_api_key || modelConfig.has_api_key) ? copy("已配置", "Ready") : copy("需要配置", "Setup Needed")}</strong>
-            <small>{modelConfig?.default_model ?? "gpt-4o-mini"}</small>
-          </button>
-          <div className="mission-card">
-            <span>{copy("模式", "Mode")}</span>
-            <strong>{uiMode}</strong>
-            <small>{simulationSemantics.mode} · {Math.round(simulationSemantics.confidence * 100)}%</small>
-          </div>
-          <div className="mission-card">
-            <span>{copy("运行", "Run")}</span>
-            <strong>{runStatus}</strong>
-            <small>{glimpseSnapshot.length} {copy("条广播", "broadcasts")}</small>
-          </div>
-        </div>
-      </section>
+      <StudioStatusRail
+        copy={copy}
+        modelReady={Boolean(modelConfig && (!modelConfig.requires_api_key || modelConfig.has_api_key))}
+        modelName={modelConfig?.default_model ?? "gpt-4o-mini"}
+        mode={uiMode}
+        entityCount={entityCount}
+        backgroundCount={backgroundCount}
+        runStatus={runStatus}
+        eventCount={eventCount}
+        onModel={() => setShowModelConfig(true)}
+        onMode={() => setActiveStudioPanel("advanced")}
+        onBackground={() => {
+          setSelectedNodeId(null);
+          setSelectedEdgeId(null);
+          setActiveStudioPanel("inspect");
+        }}
+      />
 
       <div className="layout studio-layout">
         <aside className={`sidebar left studio-drawer studio-drawer-left ${activeStudioPanel === "create" ? "open" : ""}`}>
@@ -1303,15 +1312,9 @@ export default function App() {
           <div className={`create-section ${createStep === "manual" ? "active" : ""}`}>
           <div className="sidebar-header create-subhead">
             <h4>{copy("添加实体", "Add Entities")}</h4>
-            <span className="count-chip">{entityDefinitions.length}</span>
+            <span className="count-chip">{entityCount}</span>
           </div>
-          <div className="entity-library">
-          {entityDefinitions.map((entity) => (
-            <button className={`node-card entity-card entity-card-${entity.type}`} key={entity.type} onClick={() => addEntityNode(entity.type)}>
-              <span className="node-card-title">+ {lang === "en-US" ? entity.titleEn : entity.titleZh}</span>
-            </button>
-          ))}
-          </div>
+          <EntityPalette lang={lang} counts={entityCounts} onAdd={addEntityNode} />
           {uiMode === "custom" ? (
             <details className="technical-node-details">
               <summary>{copy("开发者底层节点", "Developer Nodes")}</summary>
@@ -1344,114 +1347,6 @@ export default function App() {
             <p>{tr("events")}: {eventCount}</p>
             {runStatus === "waiting_human" ? <p className="wait-hint">{tr("waitingHuman")}</p> : null}
           </div>
-          <div className={`template-box product-tuning-box create-section ${createStep === "roles" ? "active" : ""}`}>
-            <div className="sidebar-header">
-              <h4>{tr("modeSwitch")}</h4>
-              <span className="count-chip">{uiMode}</span>
-            </div>
-            <div className="mode-chip-row">
-              {(["research", "roleplay", "custom"] as UiMode[]).map((mode) => (
-                <button key={mode} className={`btn ${uiMode === mode ? "primary" : ""}`} onClick={() => onUiModeChange(mode)}>
-                  {mode}
-                </button>
-              ))}
-            </div>
-            <div className="semantic-strip">
-              <span>{tr("directorRead")}</span>
-              <strong>{simulationSemantics.mode}</strong>
-              <small>{Math.round(simulationSemantics.confidence * 100)}%</small>
-            </div>
-            <label>
-              {copy("展开粒度", "Detail Granularity")}
-              <select value={detailGranularity} onChange={(e) => updateSimulationMeta({ detail_granularity: e.target.value })}>
-                <option value="concise">{copy("简洁：推进结果优先", "Concise: outcome first")}</option>
-                <option value="detailed">{copy("细粒度：展开具体过程", "Detailed: expand concrete process")}</option>
-              </select>
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={preflightConfig.enabled}
-                onChange={(e) =>
-                  updateSimulationMeta({
-                    preflight_confirm: {
-                      ...(simulationMeta.preflight_confirm as Record<string, unknown> | undefined),
-                      enabled: e.target.checked
-                    }
-                  })
-                }
-              />
-              {tr("preflight")}
-            </label>
-            <label>
-              {tr("warmupNodes")}
-              <input
-                type="number"
-                min={0}
-                max={20}
-                value={preflightConfig.warmupNodes}
-                onChange={(e) =>
-                  updateSimulationMeta({
-                    preflight_confirm: {
-                      ...(simulationMeta.preflight_confirm as Record<string, unknown> | undefined),
-                      warmup_nodes: Number(e.target.value || "1")
-                    }
-                  })
-                }
-              />
-            </label>
-            <label>
-              {tr("minExpensive")}
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={preflightConfig.minRemainingExpensiveNodes}
-                onChange={(e) =>
-                  updateSimulationMeta({
-                    preflight_confirm: {
-                      ...(simulationMeta.preflight_confirm as Record<string, unknown> | undefined),
-                      min_remaining_expensive_nodes: Number(e.target.value || "1")
-                    }
-                  })
-                }
-              />
-            </label>
-            <label>
-              {tr("confirmQuestion")}
-              <textarea
-                rows={2}
-                value={preflightConfig.question}
-                onChange={(e) =>
-                  updateSimulationMeta({
-                    preflight_confirm: {
-                      ...(simulationMeta.preflight_confirm as Record<string, unknown> | undefined),
-                      question: e.target.value
-                    }
-                  })
-                }
-              />
-            </label>
-            <div className="seed-strip">
-              <span>{tr("seed")}</span>
-              <strong>{simulationSeed || tr("notSet")}</strong>
-            </div>
-            <div className="mode-chip-row">
-              <button
-                className="btn"
-                onClick={() => {
-                  const seed = simulationSeed || `seed_${Date.now().toString(36)}`;
-                  navigator.clipboard?.writeText(seed).catch(() => undefined);
-                }}
-              >
-                {tr("copySeed")}
-              </button>
-              <button className="btn" onClick={() => updateSimulationMeta({ seed: `seed_${Date.now().toString(36)}` })}>
-                {tr("regenerate")}
-              </button>
-            </div>
-          </div>
-
           <div className={`template-box create-section ${createStep === "manual" ? "active" : ""}`}>
             <div className="sidebar-header">
               <h4>{tr("roleCards")}</h4>
@@ -1936,9 +1831,15 @@ export default function App() {
             ×
           </button>
           <div className="sidebar-header">
-            <h3>{tr("inspector")}</h3>
+            <h3>{activeStudioPanel === "advanced" ? tr("advanced") : tr("inspector")}</h3>
             <span className="selection-chip">
-              {selectedNode ? `${tr("node")}: ${selectedNode.id}` : selectedEdge ? `Edge: ${selectedEdge.id}` : tr("global")}
+              {activeStudioPanel === "advanced"
+                ? `${runStatus} · ${eventCount}`
+                : selectedNode
+                  ? `${tr("node")}: ${selectedNode.id}`
+                  : selectedEdge
+                    ? `Edge: ${selectedEdge.id}`
+                    : tr("global")}
             </span>
           </div>
           <div className="inspector-panel">
@@ -2398,11 +2299,28 @@ export default function App() {
                   <MetricCard label={copy("风险", "Risk")} value={formatRatio(simulationView.variables.risk)} />
                   <MetricCard label={copy("对齐度", "Alignment")} value={formatRatio(simulationView.variables.alignment)} />
             </div>
-            <div className="metric-inline">
-              <span>Task: {simulationView.stateMemory.task_state}</span>
-              <span>Collab: {simulationView.stateMemory.collaboration_state}</span>
-              <span>Relation: {simulationView.stateMemory.relationship_state}</span>
-            </div>
+            {simulationView.dynamicState.enabled ? (
+              <div className="dynamic-state-panel">
+                <div className="dynamic-state-head">
+                  <strong>{copy("当前状态", "Current State")}</strong>
+                  <span>v{simulationView.dynamicState.version} · {simulationView.dynamicState.concepts.length}</span>
+                </div>
+                {simulationView.dynamicState.concepts.map((concept) => (
+                  <div className="dynamic-state-row" key={concept.id} title={concept.description}>
+                    <span>{concept.id.replaceAll("_", " ")}</span>
+                    <strong>{formatDynamicStateValue(concept.value)}</strong>
+                    {concept.confidence != null ? <small>{formatRatio(concept.confidence)}</small> : null}
+                  </div>
+                ))}
+                {simulationView.dynamicState.concepts.length === 0 ? <div className="empty-hint">{copy("等待状态形成", "Awaiting state")}</div> : null}
+              </div>
+            ) : (
+              <div className="metric-inline">
+                <span>Task: {simulationView.stateMemory.task_state}</span>
+                <span>Collab: {simulationView.stateMemory.collaboration_state}</span>
+                <span>Relation: {simulationView.stateMemory.relationship_state}</span>
+              </div>
+            )}
             <div className="relationship-map">
               {relationshipRows.length === 0 ? <div className="empty-hint">{tr("relationshipMapEmpty")}</div> : null}
               {relationshipRows.slice(0, 10).map((row) => (

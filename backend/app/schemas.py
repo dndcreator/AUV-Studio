@@ -25,6 +25,8 @@ RunEventType = Literal[
     "nodes_activated",
     "episode_audited",
     "context_pack_activated",
+    "dynamic_state_updated",
+    "dynamic_state_failed",
 ]
 RunStatus = Literal["pending", "running", "waiting_human", "stopping", "stopped", "succeeded", "failed"]
 

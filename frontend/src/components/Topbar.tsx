@@ -29,7 +29,8 @@ export function Topbar(props: TopbarProps) {
           <span className="brand-antenna" />
         </div>
         <div>
-          <div className="brand-title">AUV-TV</div>
+          <div className="brand-title">AUV</div>
+          <div className="brand-subtitle">SIMULATION STUDIO</div>
         </div>
       </div>
 

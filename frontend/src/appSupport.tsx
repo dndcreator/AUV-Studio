@@ -48,12 +48,33 @@ export function formatRatio(value: number | null | undefined): string {
   return `${Math.round(n * 100)}%`;
 }
 
+export function formatDynamicStateValue(value: unknown): string {
+  if (value == null || value === "") {
+    return "-";
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => formatDynamicStateValue(item)).join(" · ");
+  }
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => `${key}: ${formatDynamicStateValue(item)}`)
+      .join(" · ");
+  }
+  return String(value);
+}
+
 export function buildSimulationView(events: RunEvent[]): {
   stepSeq: number | null;
   phaseName: string;
   variables: { progress: number; confidence: number; risk: number; alignment: number };
   worldState: { current_time: string; current_location: string; temporal_scope: string; spatial_scope: string };
   stateMemory: { task_state: string; collaboration_state: string; relationship_state: string };
+  dynamicState: {
+    enabled: boolean;
+    version: number;
+    schemaVersion: number;
+    concepts: Array<{ id: string; description: string; value: unknown; confidence: number | null }>;
+  };
   timeline: Array<{ seq: number; nodeId: string; status: string; phaseName: string }>;
 } {
   const fallback = {
@@ -62,6 +83,12 @@ export function buildSimulationView(events: RunEvent[]): {
     variables: { progress: 0, confidence: 0, risk: 0, alignment: 0 },
     worldState: { current_time: "", current_location: "", temporal_scope: "", spatial_scope: "" },
     stateMemory: { task_state: "planning", collaboration_state: "aligned", relationship_state: "neutral" },
+    dynamicState: {
+      enabled: false,
+      version: 1,
+      schemaVersion: 0,
+      concepts: [] as Array<{ id: string; description: string; value: unknown; confidence: number | null }>
+    },
     timeline: [] as Array<{ seq: number; nodeId: string; status: string; phaseName: string }>
   };
   const sorted = [...events].sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0));
@@ -69,11 +96,30 @@ export function buildSimulationView(events: RunEvent[]): {
   let lastVars = { progress: 0, confidence: 0, risk: 0, alignment: 0 };
   let lastWorldState = { current_time: "", current_location: "", temporal_scope: "", spatial_scope: "" };
   let lastStateMemory = { task_state: "planning", collaboration_state: "aligned", relationship_state: "neutral" };
+  let lastDynamicState = fallback.dynamicState;
   let phaseName = "";
   let stepSeq: number | null = null;
   for (const e of sorted) {
     const payload = e.payload as Record<string, unknown>;
     const sim = payload.simulation_state as Record<string, unknown> | undefined;
+    const dynamicState = (payload.dynamic_state ?? sim?.dynamic_state) as Record<string, unknown> | undefined;
+    if (dynamicState && typeof dynamicState === "object") {
+      const concepts = dynamicState.concepts as Record<string, Record<string, unknown>> | undefined;
+      const values = dynamicState.values as Record<string, Record<string, unknown>> | undefined;
+      lastDynamicState = {
+        enabled: Boolean(dynamicState.enabled),
+        version: Number(dynamicState.version ?? 1) || 1,
+        schemaVersion: Number(dynamicState.schema_version ?? 0) || 0,
+        concepts: concepts && typeof concepts === "object"
+          ? Object.entries(concepts).map(([id, concept]) => ({
+              id,
+              description: String(concept.description ?? ""),
+              value: values?.[id]?.value,
+              confidence: typeof values?.[id]?.confidence === "number" ? Number(values[id].confidence) : null
+            }))
+          : []
+      };
+    }
     if (!sim || typeof sim !== "object") {
       continue;
     }
@@ -118,9 +164,17 @@ export function buildSimulationView(events: RunEvent[]): {
     stepSeq = Number(e.seq ?? 0);
   }
   if (timeline.length === 0) {
-    return fallback;
+    return { ...fallback, dynamicState: lastDynamicState };
   }
-  return { stepSeq, phaseName, variables: lastVars, worldState: lastWorldState, stateMemory: lastStateMemory, timeline };
+  return {
+    stepSeq,
+    phaseName,
+    variables: lastVars,
+    worldState: lastWorldState,
+    stateMemory: lastStateMemory,
+    dynamicState: lastDynamicState,
+    timeline
+  };
 }
 
 export function buildMonitorRows(
@@ -141,7 +195,9 @@ export function buildMonitorRows(
           e.event === "failed" ||
           e.event === "waiting_human" ||
           e.event === "director_overridden" ||
-          e.event === "director_corrected"
+          e.event === "director_corrected" ||
+          e.event === "dynamic_state_updated" ||
+          e.event === "dynamic_state_failed"
         )
       ) {
         continue;
@@ -155,6 +211,8 @@ export function buildMonitorRows(
           e.event === "waiting_human" ||
           e.event === "director_overridden" ||
           e.event === "director_corrected" ||
+          e.event === "dynamic_state_updated" ||
+          e.event === "dynamic_state_failed" ||
           e.node_id.startsWith("director")
         )
       ) {
@@ -229,19 +287,29 @@ export function monitorMessage(e: RunEvent): string {
     const score = typeof payload.score === "number" ? ` score=${payload.score.toFixed(2)}` : "";
     return `Director quality correction issued.${score}`;
   }
+  if (e.event === "dynamic_state_updated") {
+    const changed = Boolean(e.payload?.changed);
+    const count = Number(e.payload?.active_concepts ?? 0) || 0;
+    return changed ? `Canonical state updated. ${count} active concepts.` : "Canonical state reviewed; no durable change.";
+  }
+  if (e.event === "dynamic_state_failed") {
+    return "Canonical state update failed; participant actions were preserved.";
+  }
   return "Node skipped by routing/condition.";
 }
 
 export function EdgeInteractionPanel(props: { edge: Edge; modes: string[]; onChange: (key: string, value: string | number | boolean) => void }) {
+  const { i18n } = useTranslation();
+  const copy = (zh: string, en: string) => (i18n.language?.startsWith("en") ? en : zh);
   const interaction = (((props.edge.data as Record<string, unknown>)?.interaction ?? defaultEdgeInteraction()) as Record<string, unknown>) || {};
   return (
     <div className="panel">
       <div className="panel-meta">
         <strong>EDGE</strong> / {props.edge.source} -&gt; {props.edge.target}
       </div>
-      <h4>Interaction</h4>
+      <h4>{copy("互动", "Interaction")}</h4>
       <label>
-        Mode
+        {copy("方式", "Mode")}
         <select value={String(interaction.mode ?? "dialogue")} onChange={(e) => props.onChange("mode", e.target.value)}>
           {props.modes.map((m) => (
             <option key={m} value={m}>
@@ -251,20 +319,20 @@ export function EdgeInteractionPanel(props: { edge: Edge; modes: string[]; onCha
         </select>
       </label>
       <label>
-        Relation
+        {copy("关系", "Relation")}
         <input value={String(interaction.relation ?? "peer")} onChange={(e) => props.onChange("relation", e.target.value)} />
       </label>
       <label>
-        Template
+        {copy("模板", "Template")}
         <textarea
           value={String(interaction.template ?? "")}
           onChange={(e) => props.onChange("template", e.target.value)}
-          placeholder="Template"
+          placeholder={copy("互动模板", "Interaction template")}
           rows={3}
         />
       </label>
       <label>
-        Intensity
+        {copy("强度", "Intensity")}
         <input
           type="number"
           value={String(interaction.intensity ?? 1)}
@@ -280,7 +348,7 @@ export function EdgeInteractionPanel(props: { edge: Edge; modes: string[]; onCha
           checked={Boolean(interaction.required ?? false)}
           onChange={(e) => props.onChange("required", e.target.checked)}
         />
-        Required
+        {copy("必须执行", "Required")}
       </label>
     </div>
   );
@@ -300,7 +368,8 @@ export function EnvironmentPanel(props: {
   nodes: Node[];
   onChange: (key: "profile" | "scenario" | "time_context" | "spatial_context" | "facts" | "constraints" | "glossary" | "context_book", value: unknown) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const copy = (zh: string, en: string) => (i18n.language?.startsWith("en") ? en : zh);
   const book = props.environment.context_book ?? { entries: [], token_budget: 1600 };
   const updateEntries = (entries: BackgroundEntry[]) => props.onChange("context_book", { ...book, entries });
   const updateEntry = (id: string, patch: Partial<BackgroundEntry>) =>
@@ -325,15 +394,15 @@ export function EnvironmentPanel(props: {
   return (
     <div className="panel">
       <div className="panel-meta">
-        <strong>GLOBAL</strong> / Environment Engine
+        <strong>WORLD</strong> / {copy("环境引擎", "Environment")}
       </div>
       <label>
-        Profile
+        {copy("世界概况", "Profile")}
         <textarea
           value={props.environment.profile}
           onChange={(e) => props.onChange("profile", e.target.value)}
           rows={2}
-          placeholder="Profile"
+          placeholder={copy("背景概况", "World profile")}
         />
       </label>
       <div className="context-book">
@@ -402,34 +471,34 @@ export function EnvironmentPanel(props: {
         </div>
       </div>
       <label>
-        Scenario
+        {copy("当前场景", "Scenario")}
         <textarea
           value={props.environment.scenario}
           onChange={(e) => props.onChange("scenario", e.target.value)}
           rows={3}
-          placeholder="Scenario"
+          placeholder={copy("当前场景", "Scenario")}
         />
       </label>
       <label>
-        Time
+        {copy("时间", "Time")}
         <textarea
           value={props.environment.time_context ?? ""}
           onChange={(e) => props.onChange("time_context", e.target.value)}
           rows={2}
-          placeholder="Time context"
+          placeholder={copy("时间背景", "Time context")}
         />
       </label>
       <label>
-        Space
+        {copy("空间", "Space")}
         <textarea
           value={props.environment.spatial_context ?? ""}
           onChange={(e) => props.onChange("spatial_context", e.target.value)}
           rows={2}
-          placeholder="Spatial context"
+          placeholder={copy("空间背景", "Spatial context")}
         />
       </label>
       <label>
-        Facts (one per line)
+        {copy("事实（每行一条）", "Facts (one per line)")}
         <textarea
           value={props.environment.facts.join("\n")}
           onChange={(e) => props.onChange("facts", e.target.value)}
@@ -437,7 +506,7 @@ export function EnvironmentPanel(props: {
         />
       </label>
       <label>
-        Constraints (one per line)
+        {copy("约束（每行一条）", "Constraints (one per line)")}
         <textarea
           value={props.environment.constraints.join("\n")}
           onChange={(e) => props.onChange("constraints", e.target.value)}
@@ -445,7 +514,7 @@ export function EnvironmentPanel(props: {
         />
       </label>
       <label>
-        Glossary (JSON)
+        {copy("术语表（JSON）", "Glossary (JSON)")}
         <textarea
           value={JSON.stringify(props.environment.glossary, null, 2)}
           onChange={(e) => props.onChange("glossary", e.target.value)}
@@ -464,6 +533,8 @@ export function NodeConfigPanel(props: {
   onConfigChange: (key: string, value: string) => void;
   onInputChange: (key: string, value: string) => void;
 }) {
+  const { i18n } = useTranslation();
+  const copy = (zh: string, en: string) => (i18n.language?.startsWith("en") ? en : zh);
   const nodeType = String((props.node.data as Record<string, unknown>)?.nodeType) as NodeType;
   const config = ((props.node.data as Record<string, unknown>)?.config ?? {}) as Record<string, unknown>;
   const inputs = ((props.node.data as Record<string, unknown>)?.inputs ?? {}) as Record<string, unknown>;
@@ -476,17 +547,66 @@ export function NodeConfigPanel(props: {
       <div className="panel-meta">
         <strong>{nodeType.toUpperCase()}</strong> / {props.node.id}
       </div>
-      <h4>Config</h4>
+      <h4>{copy("配置", "Config")}</h4>
       {configFields
         .filter((f) => props.showAdvanced || !f.advanced)
-        .map((field) => renderField(field, config[field.key], props.onConfigChange))}
-      <h4>Inputs</h4>
-      {inputFields.length === 0 ? <div className="panel-meta">none</div> : null}
+        .map((field) => renderField(localizeNodeField(field, i18n.language), config[field.key], props.onConfigChange))}
+      <h4>{copy("输入", "Inputs")}</h4>
+      {inputFields.length === 0 ? <div className="panel-meta">{copy("无", "none")}</div> : null}
       {inputFields
         .filter((f) => props.showAdvanced || !f.advanced)
-        .map((field) => renderField(field, inputs[field.key], props.onInputChange))}
+        .map((field) => renderField(localizeNodeField(field, i18n.language), inputs[field.key], props.onInputChange))}
     </div>
   );
+}
+
+const nodeFieldLabelsZh: Record<string, string> = {
+  "Integration Mode": "接入方式",
+  "Agent ID": "Agent ID",
+  "Endpoint URL": "接口地址",
+  "Endpoint Path": "接口路径",
+  "API Key": "API Key",
+  "Timeout (ms)": "超时（毫秒）",
+  "Max Tokens": "最大 Token",
+  "Inject Background Context": "注入背景上下文",
+  "Prompt Template": "提示词模板",
+  Model: "模型",
+  "Global Objective": "全局目标",
+  "Style Guardrails": "风格约束",
+  "GPRO Candidates": "GPRO 候选数",
+  "Entity Type": "实体类型",
+  "Entity Name": "实体名称",
+  "Entity Profile": "实体设定",
+  "Default Behavior Rule": "基础行为规则",
+  "Execution Mode": "执行方式",
+  "Runtime Role": "运行角色",
+  "Model Connection": "模型连接",
+  "Model Provider": "模型服务",
+  "Compiled System Prompt": "系统提示词",
+  "External Integration Mode": "外接方式",
+  "External Agent URL": "外接 Agent 地址",
+  "External Agent Path": "外接 Agent 路径",
+  "External Agent API Key": "外接 Agent API Key",
+  "External Timeout (ms)": "外接超时（毫秒）",
+  Template: "模板",
+  "Checkpoint Owner": "确认点负责人",
+  "Question Template": "问题模板",
+  "Response Required": "必须响应",
+  "Tool Name": "工具名称",
+  Expression: "表达式",
+  "Task Prompt": "任务提示词",
+  "Question Override": "问题覆盖",
+  "Context Hint": "上下文提示",
+  "Current Situation": "当前情境",
+  Prompt: "提示词",
+  Text: "文本"
+};
+
+function localizeNodeField(field: NodeFieldSpec, language: string): NodeFieldSpec {
+  if (language.startsWith("en")) {
+    return field;
+  }
+  return { ...field, label: nodeFieldLabelsZh[field.label] ?? field.label };
 }
 
 export function renderField(

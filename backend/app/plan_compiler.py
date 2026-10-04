@@ -1219,6 +1219,13 @@ def _build_simulation_blueprint(extracted: dict, req: PlanCompileRequest) -> dic
         "method_modules": [str(m) for m in method_modules[:8]],
         "horizon_rounds": max(3, min(req.max_agents + 2, 12)),
         "execution_model": "continuous" if mode == "roleplay" or (mode == "research" and submode == "simulation") else "dag",
+        "dynamic_state": {
+            "enabled": mode == "roleplay" or (mode == "research" and submode == "simulation"),
+            "max_concepts": 48,
+            "max_per_owner": 10,
+            "max_new_per_round": 3,
+            "max_history": 160,
+        },
         "director_interval_rounds": 1 if mode == "roleplay" else 2,
         "detail_granularity": "detailed" if mode == "roleplay" else "concise",
         "phases": phases,
