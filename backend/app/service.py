@@ -570,7 +570,10 @@ def get_run_checkpoints(db: Session, run_id: str, limit: int = 80) -> RunCheckpo
         raise HTTPException(status_code=404, detail="run not found")
     rows = (
         db.query(RunEventRecord)
-        .filter(RunEventRecord.run_id == run_id, RunEventRecord.event.in_(["succeeded", "waiting_human", "failed"]))
+        .filter(
+            RunEventRecord.run_id == run_id,
+            RunEventRecord.event.in_(["succeeded", "waiting_human", "failed", "dynamic_state_updated"]),
+        )
         .order_by(RunEventRecord.seq.desc())
         .limit(max(1, min(limit, 300)))
         .all()
@@ -604,7 +607,7 @@ def build_rollback_request(db: Session, run_id: str, request: RollbackRequest) -
     row = db.query(RunEventRecord).filter(RunEventRecord.run_id == run_id, RunEventRecord.seq == request.event_seq).first()
     if row is None:
         raise HTTPException(status_code=404, detail="checkpoint event not found")
-    if row.event not in {"succeeded", "waiting_human", "failed"}:
+    if row.event not in {"succeeded", "waiting_human", "failed", "dynamic_state_updated"}:
         raise HTTPException(status_code=400, detail="event is not rollback-capable")
     payload = _safe_json_loads(row.payload_json, {})
     trace = payload.get("_trace", {}) if isinstance(payload, dict) else {}
@@ -617,6 +620,9 @@ def build_rollback_request(db: Session, run_id: str, request: RollbackRequest) -
             "event": row.event,
             "reason": (request.reason or "").strip(),
             "context_snapshot": context_snapshot,
+            "continuous_snapshot": payload.get("_rollback_snapshot", {})
+            if isinstance(payload.get("_rollback_snapshot", {}), dict)
+            else {},
         }
     }
     return source.workflow_id, RunRequest(input=rollback_input, retry_from_run_id=run_id, retry_from_node=row.node_id)
@@ -885,6 +891,9 @@ def _safe_json_loads(raw: str, default: object) -> object:
 
 
 def _row_to_event(row: RunEventRecord) -> RunEvent:
+    payload = json.loads(row.payload_json)
+    if isinstance(payload, dict):
+        payload.pop("_rollback_snapshot", None)
     return RunEvent(
         seq=row.seq,
         run_id=row.run_id,
@@ -892,7 +901,7 @@ def _row_to_event(row: RunEventRecord) -> RunEvent:
         event=row.event,  # type: ignore[arg-type]
         timestamp=row.timestamp,
         duration_ms=row.duration_ms,
-        payload=json.loads(row.payload_json),
+        payload=payload,
     )
 
 

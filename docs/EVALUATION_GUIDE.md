@@ -1,6 +1,6 @@
 # 真实模型效果评测
 
-最后更新：2026-10-02
+最后更新：2026-10-04
 
 ## 目标
 
@@ -17,6 +17,25 @@ Eval 使用固定场景和当前已配置的模型，检查模拟效果是否随
 - 检查角色参与、行动契约、状态推进、重复率，以及 Director 是否确认完成条件。
 
 场景定义：`backend/evals/scenarios/roleplay_basic.json`。
+
+## Dynamic State 专项
+
+`dynamic_state_quality` 使用一段包含对白、动作和短暂心理细节的固定关系冲突，验证模型是否只保留会约束后续行动的事实。规则评分检查：
+
+- 至少捕获一项持久事实，但活动概念不超过四项。
+- 每个状态引用准确的节点、行动序号和事件序号。
+- 私有状态只能由其 owner 的行动建立。
+- 不把皱眉、叹气、目光、心跳、语气等瞬时叙事细节写入状态。
+
+预检与真实执行：
+
+```powershell
+cd backend
+python -m app.eval_runner --scenario dynamic_state_quality
+python -m app.eval_runner --scenario dynamic_state_quality --execute --judge
+```
+
+该场景预计约 9 次产品调用；`--judge` 额外增加一次评审调用，仍受统一调用、Token 和估算费用上限约束。
 
 ## 预检
 

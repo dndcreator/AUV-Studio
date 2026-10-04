@@ -91,3 +91,11 @@
 4. 私有概念只对所属节点可见，路由和公共事件不可见
 5. Director阶段审计同一次调用返回并应用状态 Patch
 6. `dynamic_state_updated` 事件包含版本、来源和接受/拒绝结果
+7. 声明类型与实际值不匹配时拒绝写入
+8. 新概念初值失败时原子撤销 Schema，不残留空概念
+9. 私有 owner、visibility、scope 与 value type 不可越权修改
+10. Schema/State 操作必须引用本轮准确 action/event
+11. round-TTL 状态到期自动退休
+12. 连续 Dynamic State 缺少 Director 时工作流校验失败
+13. Dynamic State 检查点回滚后精确恢复私有概念、值与来源
+14. `dynamic_state_quality` 真实模型场景检查持久事实遗漏、状态膨胀、瞬时心理细节和来源完整性

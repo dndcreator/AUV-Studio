@@ -93,7 +93,7 @@
 
 ## 4.1 调试与回滚
 
-- 检查点来源：运行事件中的 `succeeded | waiting_human | failed`
+- 检查点来源：运行事件中的 `succeeded | waiting_human | failed | dynamic_state_updated`
 - `GET /runs/{run_id}/checkpoints` 返回最近检查点：
   - `seq`：事件序号
   - `node_id`：检查点节点
@@ -103,7 +103,7 @@
 - `POST /runs/{run_id}/rollback`
   - 请求：`{"event_seq": 12, "reason": "方向偏了，从这里重开"}`
   - 响应：`{"run_id": "run_xxx", "status": "queued", "source_run_id": "...", "event_seq": 12, "retry_from_node": "..."}`
-  - 语义：创建一个新的 run，不修改原 run；新 run 会从检查点节点重新执行，并复用检查点之前的上游输出。
+  - 语义：创建一个新的 run，不修改原 run；DAG 复用检查点之前的上游输出，连续模拟从内部快照精确恢复当时的 Dynamic State 与既有行动。
   - 回滚输入会写入新 run 的 `input._rollback`，方便后续追溯。
 
 ## 5. 外接 Agent 接入模式
@@ -132,7 +132,7 @@
   - `nodes_activated`：AI 语义路由为当前阶段选择了相关自治节点。
   - `episode_audited`：Director 在节点完成提案后审计继续、转段或结束，不代替节点作出内容决策。
   - `context_pack_activated`：记录运行开始或转段时激活的背景条目、原因和估算 Token。
-  - `dynamic_state_updated`：记录动态概念 Schema 与状态 Patch 的版本、来源及接受/拒绝结果；公共事件只包含全局可见概念。
+  - `dynamic_state_updated`：记录动态概念 Schema 与状态 Patch 的版本、准确行动/事件来源及接受/拒绝结果；公共事件只包含全局可见概念，内部回滚快照不会经事件 API 返回。
   - `dynamic_state_failed`：状态维护失败但节点行动已保留，运行可继续。
 - Event 负载包含 `_trace`：
   - `trace_id`

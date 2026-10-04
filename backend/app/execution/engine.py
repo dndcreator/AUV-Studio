@@ -20,6 +20,7 @@ from .dynamic_state import (
     apply_dynamic_state_proposal,
     compact_dynamic_state,
     dynamic_state_enabled,
+    expire_dynamic_state,
     simulation_state_for_node,
     state_coder_audit_clause,
 )
@@ -65,6 +66,12 @@ class WorkflowEngine:
         for entry in workflow.entry_nodes:
             if entry not in node_ids:
                 raise WorkflowValidationError(f"entry node '{entry}' does not exist")
+        simulation = workflow.environment.simulation if isinstance(workflow.environment.simulation, dict) else {}
+        continuous = str(simulation.get("execution_model", "")).strip().lower() == "continuous"
+        dynamic_config = simulation.get("dynamic_state", {})
+        dynamic_enabled = not isinstance(dynamic_config, dict) or bool(dynamic_config.get("enabled", True))
+        if continuous and dynamic_enabled and not any(node.type == "director" for node in workflow.nodes):
+            raise WorkflowValidationError("continuous dynamic state requires a Director node")
         WorkflowEngine._topological_sort(workflow.nodes, workflow.edges)
 
     @staticmethod
@@ -375,6 +382,26 @@ class WorkflowEngine:
                 }
             )
         return out
+
+    @staticmethod
+    def _memories_at_rollback(memories: list[dict[str, Any]], request: RunRequest) -> list[dict[str, Any]]:
+        rollback = request.input.get("_rollback") if isinstance(request.input, dict) else None
+        if not isinstance(rollback, dict):
+            return memories
+        source_run_id = str(rollback.get("from_run_id", "")).strip()
+        try:
+            event_seq = int(rollback.get("event_seq"))
+        except (TypeError, ValueError):
+            return memories
+        filtered: list[dict[str, Any]] = []
+        for memory in memories:
+            if str(memory.get("run_id", "")) != source_run_id:
+                filtered.append(memory)
+                continue
+            source_seq = memory.get("source_event_seq")
+            if isinstance(source_seq, int) and source_seq <= event_seq:
+                filtered.append(memory)
+        return filtered
 
     @staticmethod
     def _extract_memory_content(node_type: str, output: dict[str, Any]) -> str:
@@ -694,6 +721,38 @@ class WorkflowEngine:
             ]
             if isinstance(entries, list)
             else [],
+        }
+
+    @staticmethod
+    def _continuous_snapshot(
+        context: dict[str, Any],
+        actions: list[dict[str, Any]],
+        round_index: int,
+        action_index: int,
+        simulation_seq: int,
+    ) -> dict[str, Any]:
+        return {
+            "simulation_state": context.get("_simulation", {}),
+            "actions": actions,
+            "round": round_index,
+            "action_index": action_index,
+            "simulation_seq": simulation_seq,
+        }
+
+    @staticmethod
+    def _restore_continuous_checkpoint(context: dict[str, Any], request: RunRequest) -> None:
+        rollback = request.input.get("_rollback") if isinstance(request.input, dict) else None
+        snapshot = rollback.get("continuous_snapshot") if isinstance(rollback, dict) else None
+        if not isinstance(snapshot, dict):
+            return
+        simulation_state = snapshot.get("simulation_state")
+        if isinstance(simulation_state, dict):
+            context["_simulation"] = simulation_state
+        context["_continuous_resume"] = {
+            "actions": snapshot.get("actions", []) if isinstance(snapshot.get("actions"), list) else [],
+            "round": int(snapshot.get("round", 0) or 0),
+            "action_index": int(snapshot.get("action_index", 0) or 0),
+            "simulation_seq": int(snapshot.get("simulation_seq", 0) or 0),
         }
 
     @staticmethod
@@ -1041,16 +1100,41 @@ class WorkflowEngine:
         entities = [node for node in workflow.nodes if is_entity_node(node)]
         director = next((node for node in workflow.nodes if node.type == "director"), None)
         summary = next((node for node in workflow.nodes if node.id.startswith("summary_")), None)
-        recent_actions: list[dict[str, Any]] = []
-        simulation_seq = 0
+        resume = context.pop("_continuous_resume", {})
+        recent_actions = list(resume.get("actions", [])) if isinstance(resume, dict) and isinstance(resume.get("actions"), list) else []
+        simulation_seq = int(resume.get("simulation_seq", 0) or 0) if isinstance(resume, dict) else 0
         guidance = ""
         director_override_cursor = 0
         activation_cursor = 0
-        state_coder_cursor = 0
+        state_coder_cursor = len(recent_actions)
 
         stop_requested = False
-        action_index = 0
-        for round_index in range(1, policy.max_rounds + 1):
+        action_index = int(resume.get("action_index", len(recent_actions)) or 0) if isinstance(resume, dict) else 0
+        start_round = int(resume.get("round", 0) or 0) + 1 if isinstance(resume, dict) else 1
+        for round_index in range(start_round, policy.max_rounds + 1):
+            simulation_state = context.get("_simulation", {})
+            if isinstance(simulation_state, dict) and dynamic_state_enabled(simulation_state):
+                expired_state, expiry_result = expire_dynamic_state(
+                    simulation_state.get("dynamic_state", {}), round_index=round_index, seq=simulation_seq
+                )
+                context["_simulation"]["dynamic_state"] = expired_state
+                if expiry_result["changed"]:
+                    _, last_event_hash = self._emit_event(
+                        db,
+                        run.id,
+                        "state_coder",
+                        "dynamic_state_updated",
+                        {
+                            "round": round_index,
+                            **expiry_result,
+                            "dynamic_state": compact_dynamic_state(expired_state),
+                            "_rollback_snapshot": self._continuous_snapshot(
+                                context, recent_actions, round_index, action_index, simulation_seq
+                            ),
+                        },
+                        caused_by="state_retention",
+                        prev_hash=last_event_hash,
+                    )
             activation_response = await self.provider.chat(
                 model="",
                 system_prompt=(
@@ -1154,6 +1238,7 @@ class WorkflowEngine:
                     {
                         "round": round_index,
                         "action_index": action_index,
+                        "event_seq": success_seq,
                         "node_id": node.id,
                         "actor": self._node_subject(node),
                         "participation": output.get("participation", "act"),
@@ -1274,7 +1359,8 @@ class WorkflowEngine:
                         context["_simulation"].get("dynamic_state", {}),
                         control["state_patch"],
                         seq=simulation_seq,
-                        source_node_ids=source_ids,
+                        source_actions=uncoded_actions,
+                        round_index=round_index,
                     )
                     context["_simulation"]["dynamic_state"] = next_dynamic_state
                     state_coder_cursor = len(recent_actions)
@@ -1283,7 +1369,14 @@ class WorkflowEngine:
                         run.id,
                         "state_coder",
                         "dynamic_state_updated",
-                        {"round": round_index, **coder_result, "dynamic_state": compact_dynamic_state(next_dynamic_state)},
+                        {
+                            "round": round_index,
+                            **coder_result,
+                            "dynamic_state": compact_dynamic_state(next_dynamic_state),
+                            "_rollback_snapshot": self._continuous_snapshot(
+                                context, recent_actions, round_index, action_index, simulation_seq
+                            ),
+                        },
                         caused_by="director_state_coder",
                         context_snapshot={
                             "round": round_index,
@@ -1532,7 +1625,9 @@ class WorkflowEngine:
         context["_run"] = {"run_id": run_id, "workflow_id": workflow.id}
         context["_environment"] = workflow.environment.model_dump()
         context["_runtime_environment"] = environment_for_runtime(workflow.environment)
-        context["_memory"] = self._load_recent_memories(db, workflow_id=workflow.id, limit=20)
+        context["_memory"] = self._memories_at_rollback(
+            self._load_recent_memories(db, workflow_id=workflow.id, limit=20), request
+        )
         context["_simulation"] = init_simulation_state(workflow)
         context["_context_pack"] = build_scene_context_pack(
             environment=workflow.environment,
@@ -1563,7 +1658,14 @@ class WorkflowEngine:
                 prev_hash=last_event_hash,
             )
         loop_policy = build_loop_policy(workflow)
-        if loop_policy.enabled and not request.retry_from_run_id and not request.retry_from_node:
+        if loop_policy.enabled:
+            self._restore_continuous_checkpoint(context, request)
+            resume_actions = context.get("_continuous_resume", {}).get("actions", [])
+            context["_context_pack"] = build_scene_context_pack(
+                environment=workflow.environment,
+                state=context["_simulation"],
+                recent_actions=resume_actions if isinstance(resume_actions, list) else [],
+            )
             try:
                 return await self._run_continuous_simulation(
                     db=db,

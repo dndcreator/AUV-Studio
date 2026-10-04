@@ -110,6 +110,47 @@ def test_deterministic_quality_detects_unfinished_director_boundary() -> None:
     assert "before the Director confirmed" in result["findings"][0]
 
 
+def test_dynamic_state_quality_rejects_transient_untraceable_clutter() -> None:
+    detail = {
+        "status": "succeeded",
+        "node_runs": [],
+        "output": {
+            "simulation": {
+                "dynamic_state": {
+                    "concepts": {
+                        "promise": {"status": "active", "visibility": "global", "owner_id": ""},
+                        "frown": {"status": "active", "visibility": "private", "owner_id": "mei"},
+                    },
+                    "values": {
+                        "promise": {
+                            "value": "Friday check-in",
+                            "source_node_ids": ["yan"],
+                            "source_refs": [{"node_id": "yan", "action_index": 2, "event_seq": 8}],
+                        },
+                        "frown": {"value": "brief", "source_node_ids": ["yan"], "source_refs": []},
+                    },
+                }
+            }
+        },
+    }
+    result = evaluate_run(
+        detail,
+        {
+            "actor_node_ids": [],
+            "dynamic_state": {
+                "min_active_concepts": 1,
+                "max_active_concepts": 3,
+                "forbidden_transient_terms": ["frown"],
+            },
+        },
+    )
+
+    assert result["checks"]["dynamic_state_has_exact_sources"] is False
+    assert result["checks"]["dynamic_private_ownership_valid"] is False
+    assert result["checks"]["dynamic_state_avoids_transient_details"] is False
+    assert result["stats"]["dynamic_state"]["active_concept_count"] == 2
+
+
 def test_cli_defaults_to_preflight_without_model_calls(capsys) -> None:  # type: ignore[no-untyped-def]
     assert main(["--scenario", "roleplay_basic"]) == 0
     output = capsys.readouterr().out

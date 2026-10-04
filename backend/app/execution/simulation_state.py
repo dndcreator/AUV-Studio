@@ -65,6 +65,7 @@ def init_simulation_state(workflow: WorkflowDefinition) -> dict[str, Any]:
             **dynamic_state_config,
             "enabled": str(raw.get("execution_model", "")).strip().lower() == "continuous",
         }
+    dynamic_state = init_dynamic_state(dynamic_state_config)
     return {
         "version": int(raw.get("version", 1) or 1),
         "mode": str(raw.get("mode", "simulation")),
@@ -94,7 +95,13 @@ def init_simulation_state(workflow: WorkflowDefinition) -> dict[str, Any]:
             "active_events": world_state_raw.get("active_events", []) if isinstance(world_state_raw.get("active_events", []), list) else [],
         },
         "timeline": [],
-        "dynamic_state": init_dynamic_state(dynamic_state_config),
+        "state_layers": {
+            "domain_facts": "dynamic_state" if dynamic_state["enabled"] else "state_memory",
+            "world_coordinates": "world_state",
+            "runtime_metrics": "variables",
+            "legacy_compatibility": "state_memory",
+        },
+        "dynamic_state": dynamic_state,
         "state_memory": {
             "version": 1,
             "current_states": {

@@ -271,6 +271,8 @@ def _review_markdown(artifact: dict[str, Any]) -> str:
             "- [ ] Each episode changes the situation rather than restating it.",
             "- [ ] Director audits continuity and boundaries without taking over the simulation.",
             "- [ ] Final output is faithful to the observed process.",
+            "- [ ] Dynamic State keeps only future-relevant facts and excludes transient prose or psychology.",
+            "- [ ] Every retained state is traceable to a concrete actor action and event.",
             "- [ ] Quality justifies the measured latency and cost.",
             "",
             "## Full Log",

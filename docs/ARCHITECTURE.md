@@ -1,6 +1,6 @@
 ﻿# 系统架构说明
 
-最后更新：2026-09-30
+最后更新：2026-10-04
 
 ## 1. 总体架构
 
@@ -66,8 +66,21 @@
 - 连续模拟使用固定的最小元协议和运行时动态概念，不预设感情、阵营、研究假设等领域字段。
 - State Coder复用 Director阶段审计，批量读取尚未编码的节点行动并返回 `schema_ops + state_ops`，不增加独立的 State Coder调用；最终轮始终执行一次边界审计以避免遗漏尾部状态。
 - 新概念必须说明持续性与未来相关性；程序层限制总概念数、单实体概念数、每轮新增数、值深度和历史长度。
+- `value_type` 是写入约束；类型不匹配的值被拒绝。`retention` 使用 `persistent | until_resolved | rounds`，其中 `rounds` 到期自动退休。
+- 每个 Schema/State 操作必须引用本批行动中的准确 `node_id + action_index + event_seq`。概念创建后，scope、owner、visibility 和 value type 不可被模型改写。
+- 私有状态只能由 owner 自己的行动建立或更新，并且始终只注入 owner 节点。
+- 连续模拟启用 Dynamic State 时必须存在 Director。Director 提供阶段审计调用，程序约束层决定 Patch 是否可接受。
 - 普通节点只收到全局概念与属于自己的私有概念；路由器和前端事件不接收私有概念内容。
-- 所有接受和拒绝的 Patch均进入 `dynamic_state_updated` 事件，支持来源追溯与回滚快照。
+- 所有接受和拒绝的 Patch均进入 `dynamic_state_updated` 事件。内部检查点保存完整状态，公共事件删除私有回滚快照。
+- 连续回滚同时裁剪源运行在检查点之后写入的记忆，避免未来信息泄漏到新分支。
+
+### 状态层职责
+
+- `dynamic_state`：连续模拟中唯一的领域事实与演化概念层。
+- `world_state`：时间、空间和环境坐标，不保存任意领域事实。
+- `variables`：进度、风险等执行遥测，不作为模拟事实来源。
+- `state_memory`：旧 DAG 工作流兼容层；连续执行不再向它写入领域状态。
+- `memories`：事实日志与角色经历的召回材料，不等同于当前权威状态。
 
 7. Context Book
 - `environment.context_book` 保存模拟开始前成立的背景、规则、观点、传言、假设与方法。
@@ -115,6 +128,6 @@ AUV continuous execution is mode-neutral. Roleplay scenes, research stages, cons
 3. Public changes are appended to a compact natural-language shared state; private changes remain in that node's rolling character/state memory.
 4. During the existing boundary audit, a separate State Coder output dynamically creates, updates, or retires only concepts that can constrain future behavior.
 5. Director does not author node decisions. It audits episode boundaries and returns only `continue`, `transition`, or `stop`, plus a compact shared-state summary.
-6. Every activation, node action, state patch, and boundary audit remains traceable in SQLite events and can participate in rollback.
+6. Every accepted state value cites a concrete node action and event. Internal Dynamic State snapshots restore the exact schema, values, visibility, and provenance during rollback.
 
 The engine hard-codes only the protocol envelope. Relevance, proposals, semantic state summaries, and phase meaning remain model-decided; there are no roleplay keyword tables or domain-specific routing rules.

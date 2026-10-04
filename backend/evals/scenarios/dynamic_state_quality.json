@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "title": "Dynamic State quality: promises without psychological clutter",
+  "estimated_calls": 9,
+  "input": {
+    "task": "让两名角色处理失约后的信任冲突；只把会约束后续选择的事实写进长期状态。"
+  },
+  "expected": {
+    "actor_node_ids": ["mei", "yan"],
+    "min_actions": 3,
+    "min_active_actors": 2,
+    "min_unique_action_ratio": 0.75,
+    "require_director_completion": true,
+    "dynamic_state": {
+      "min_active_concepts": 1,
+      "max_active_concepts": 4,
+      "forbidden_transient_terms": [
+        "frown",
+        "sigh",
+        "heartbeat",
+        "gaze",
+        "语气",
+        "皱眉",
+        "叹气",
+        "心跳",
+        "目光",
+        "沉默了几秒"
+      ]
+    }
+  },
+  "rubric": {
+    "state_precision": "Dynamic State只保留承诺、已公开信息、尚未解决的约束等会改变后续行动的概念。",
+    "state_recall": "不得遗漏已经明确成立、且下一轮必须知道的约束。",
+    "state_hygiene": "不要保存语气、皱眉、心跳、短暂情绪、对白措辞或文学描写。",
+    "provenance": "每个状态必须能追溯到具体角色行动及事件。",
+    "privacy": "角色未公开的计划只能属于该角色，不能变成全局事实。",
+    "node_autonomy": "角色自己行动，Director只做边界与状态审计。"
+  },
+  "workflow": {
+    "id": "eval_dynamic_state_quality",
+    "name": "Eval: Dynamic State precision",
+    "version": 1,
+    "nodes": [
+      {
+        "id": "director",
+        "type": "director",
+        "position": {"x": 0, "y": 0},
+        "config": {"objective": "只审计边界、连续性与持久状态，不替角色行动。", "gpro_candidates": 1},
+        "inputs": {}
+      },
+      {
+        "id": "mei",
+        "type": "agent",
+        "position": {"x": 260, "y": -90},
+        "config": {
+          "entity_type": "individual",
+          "entity_name": "梅",
+          "entity_profile": "梅曾被严连续两次临时爽约。她仍希望修复关系，但这次要求明确、可验证的承诺。",
+          "role": "提出边界的一方",
+          "behavior_prompt": "以梅的身份用中文行动。给出具体对白、动作和短暂感受，但只能控制自己；让真正会约束未来选择的事实通过行动明确成立。",
+          "model": ""
+        },
+        "inputs": {"prompt": "根据当前事实、记忆和自己的立场决定是否行动。"}
+      },
+      {
+        "id": "yan",
+        "type": "agent",
+        "position": {"x": 260, "y": 90},
+        "config": {
+          "entity_type": "individual",
+          "entity_name": "严",
+          "entity_profile": "严确实失约过两次。他想修复信任，并私下考虑拒绝下一次临时加班，但尚未决定是否说出口。",
+          "role": "需要回应的一方",
+          "behavior_prompt": "以严的身份用中文行动。给出具体对白、动作和短暂心理，但只能控制自己；未公开的计划不能伪装成双方已知事实。",
+          "model": ""
+        },
+        "inputs": {"prompt": "根据当前事实、记忆和自己的立场决定是否行动。"}
+      }
+    ],
+    "edges": [],
+    "entry_nodes": ["director"],
+    "environment": {
+      "profile": "现实主义关系冲突，不使用全知视角。",
+      "scenario": "梅和严在咖啡店讨论连续失约造成的信任问题。",
+      "time_context": "周五晚上",
+      "spatial_context": "安静的咖啡店角落",
+      "facts": [
+        "严在最近一个月内临时爽约两次。",
+        "两人尚未形成新的约定。"
+      ],
+      "constraints": [
+        "节点只能决定自己的行为。",
+        "短暂感受和文学细节可以出现在行动正文，但不应进入持久状态。",
+        "未公开的计划不得成为其他节点可见的全局事实。"
+      ],
+      "simulation": {
+        "mode": "roleplay",
+        "execution_model": "continuous",
+        "detail_granularity": "detailed",
+        "horizon_rounds": 2,
+        "max_actions": 4,
+        "director_interval_rounds": 1,
+        "dynamic_state": {
+          "enabled": true,
+          "max_concepts": 8,
+          "max_per_owner": 4,
+          "max_new_per_round": 2
+        },
+        "task_contract": {
+          "objective": "通过自治行动形成一项可验证约定，或明确谈判失败。",
+          "process_type": "distributed relationship simulation",
+          "deliverable": "可读的中文互动过程",
+          "completion_condition": "双方形成明确约定，或明确拒绝并结束谈话。"
+        }
+      }
+    }
+  }
+}

@@ -3,6 +3,20 @@
 本文件用于持续记录 AUV 的产品能力、接口、前端入口和重要实现决策，避免后续遗忘上下文。
 
 ## [Unreleased]
+### Dynamic State Hardening
+
+- Enforced declared Dynamic State value types instead of accepting arbitrary JSON under every concept.
+- Made new concept creation atomic: a rejected or missing initial value no longer leaves an empty schema entry consuming budget.
+- Replaced free-text retention with executable `persistent`, `until_resolved`, and bounded round-TTL policies; round-TTL concepts now retire automatically.
+- Made concept scope, owner, visibility, and value type immutable after creation, and rejected private writes not sourced from the owning node.
+- Required every schema/value operation to cite an exact node, action index, and event sequence from the audited action batch.
+- Made continuous Dynamic State explicitly require a Director node instead of silently remaining stale without one.
+- Defined Dynamic State as the continuous domain-fact layer, while `world_state` remains environment coordinates, `variables` remains runtime telemetry, and `state_memory` remains DAG compatibility only.
+- Added private, exact Dynamic State snapshots to internal rollback checkpoints while keeping them out of public event payloads.
+- Prevented rollback branches from recalling memories written by the source run after the selected checkpoint.
+- Added the opt-in `dynamic_state_quality` real-model scenario to detect state bloat, transient psychological detail, invalid provenance, and private-owner leakage under the existing call/token/cost limits.
+- Expanded deterministic coverage for type enforcement, immutable identity, private ownership, exact provenance, expiry, Director validation, rollback restoration, and state-quality scoring.
+
 ### Dynamic State Coder
 
 - Added a domain-neutral dynamic state layer that discovers runtime concepts instead of predefining narrative, research, relationship, or task fields.

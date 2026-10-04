@@ -39,9 +39,12 @@ def state_coder_audit_clause(actions: list[dict[str, Any]]) -> str:
         "when forgetting it could change a future action or conclusion, it persists beyond one action, and no existing "
         "concept represents it. Do not store prose, style, ordinary dialogue, transient gestures, or duplicate facts. Reuse "
         "existing concepts. Private knowledge requires visibility=private and owner_id set to the exact source node_id. "
+        "Every schema and state operation must cite one or more exact source_refs copied from UNCODED ACTIONS; never "
+        "promote an unsupported claim into state. scope, owner_id, visibility, and value_type are immutable after creation. "
         "Put the proposal in state_patch with "
         "schema_ops and state_ops. Upserts require id, description, scope, owner_id, value_type, visibility, retention, "
-        "future_relevance, and reason. State sets require concept_id, value, confidence, reason, and source_node_ids. Use "
+        "future_relevance, reason, and source_refs. retention is an object with mode persistent|until_resolved|rounds; "
+        "rounds also requires ttl_rounds. State sets require concept_id, value, confidence, reason, and source_refs. Use "
         "empty arrays when nothing deserves persistent state.\n\n"
         f"UNCODED ACTIONS:\n{json.dumps(actions, ensure_ascii=False, default=str)}\n\n"
     )
@@ -65,21 +68,24 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         "ordinary dialogue, transient gestures, duplicate facts, or details useful only for retelling the current action. "
         "Before creating a concept, apply three gates: forgetting it could change a future outcome; it persists beyond this "
         "single action; and no existing concept can represent it. Reuse existing concepts whenever possible. Private knowledge "
-        "must use visibility=private and owner_id set to the exact source node_id. A state claim is not automatically true; "
-        "use confidence and preserve "
+        "must use visibility=private and owner_id set to the exact source node_id. Every operation must cite exact "
+        "source_refs copied from new_actions (node_id, action_index, event_seq). A participant claim is not automatically "
+        "true; encode only what the cited action establishes, use confidence, and preserve "
         "uncertainty. Retire a concept only when it is resolved and cannot constrain future behavior. Return JSON only with "
         "schema_ops and state_ops. schema_ops support upsert or retire. state_ops support set or unset. Each upsert requires "
         "id, description, scope(global|entity), owner_id, value_type(scalar|text|list|object), visibility(global|private), "
-        "retention, future_relevance, and reason. Each state operation requires concept_id, value for set, confidence, reason, "
-        "and source_node_ids. Emit empty arrays when nothing deserves persistent state.\n\n"
+        "retention, future_relevance, reason, and source_refs. retention must be "
+        '{"mode":"persistent|until_resolved|rounds","ttl_rounds":3}. Each state operation requires concept_id, value '
+        "for set, confidence, reason, and source_refs. Emit empty arrays when nothing deserves persistent state.\n\n"
         f"ROUND: {round_index}\n"
         f"CONTEXT:\n{json.dumps(context, ensure_ascii=False, default=str)}\n\n"
         "OUTPUT SHAPE:\n"
         '{"schema_ops":[{"op":"upsert|retire","id":"concept_id","description":"",'
         '"scope":"global|entity","owner_id":"","value_type":"scalar|text|list|object",'
-        '"visibility":"global|private","retention":"","future_relevance":"","reason":""}],'
+        '"visibility":"global|private","retention":{"mode":"until_resolved"},"future_relevance":"",'
+        '"reason":"","source_refs":[{"node_id":"","action_index":1,"event_seq":1}]}],'
         '"state_ops":[{"op":"set|unset","concept_id":"concept_id","value":null,'
-        '"confidence":0.0,"reason":"","source_node_ids":[""]}]}'
+        '"confidence":0.0,"reason":"","source_refs":[{"node_id":"","action_index":1,"event_seq":1}]}]}'
     )
 
 
@@ -109,7 +115,8 @@ def apply_dynamic_state_proposal(
     proposal: dict[str, Any],
     *,
     seq: int,
-    source_node_ids: list[str],
+    source_actions: list[dict[str, Any]],
+    round_index: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     state = _normalize_dynamic_state(current)
     concepts = state["concepts"]
@@ -119,6 +126,7 @@ def apply_dynamic_state_proposal(
     accepted_state: list[dict[str, Any]] = []
     rejected: list[dict[str, str]] = []
     new_count = 0
+    allowed_refs = _allowed_source_refs(source_actions)
 
     for raw in proposal.get("schema_ops", []):
         if not isinstance(raw, dict):
@@ -129,6 +137,10 @@ def apply_dynamic_state_proposal(
         if not concept_id:
             rejected.append({"kind": "schema", "reason": "invalid_id"})
             continue
+        source_refs = _validated_source_refs(raw.get("source_refs"), allowed_refs)
+        if not source_refs:
+            rejected.append({"kind": "schema", "id": concept_id, "reason": "missing_or_invalid_source_ref"})
+            continue
         if operation == "retire":
             existing = concepts.get(concept_id)
             if not isinstance(existing, dict) or existing.get("status") == "retired":
@@ -138,7 +150,7 @@ def apply_dynamic_state_proposal(
             existing["updated_seq"] = seq
             existing["retired_reason"] = _short_text(raw.get("reason"), 320)
             values.pop(concept_id, None)
-            accepted_schema.append({"op": "retire", "id": concept_id})
+            accepted_schema.append({"op": "retire", "id": concept_id, "source_refs": source_refs})
             continue
         if operation != "upsert":
             rejected.append({"kind": "schema", "id": concept_id, "reason": "unsupported_operation"})
@@ -184,6 +196,22 @@ def apply_dynamic_state_proposal(
         if value_type not in {"scalar", "text", "list", "object"}:
             value_type = "text"
         prior = concepts.get(concept_id, {}) if isinstance(concepts.get(concept_id), dict) else {}
+        if not is_new:
+            immutable = {"scope": scope, "owner_id": owner_id, "visibility": visibility, "value_type": value_type}
+            changed_fields = [key for key, value in immutable.items() if prior.get(key) != value]
+            if changed_fields:
+                rejected.append(
+                    {"kind": "schema", "id": concept_id, "reason": f"immutable_fields:{','.join(changed_fields)}"}
+                )
+                continue
+        source_nodes = {ref["node_id"] for ref in source_refs}
+        if visibility == "private" and owner_id not in source_nodes:
+            rejected.append({"kind": "schema", "id": concept_id, "reason": "private_owner_not_source"})
+            continue
+        retention = _retention_policy(raw.get("retention"), round_index)
+        if retention is None:
+            rejected.append({"kind": "schema", "id": concept_id, "reason": "invalid_retention"})
+            continue
         concepts[concept_id] = {
             "id": concept_id,
             "description": description,
@@ -191,15 +219,17 @@ def apply_dynamic_state_proposal(
             "owner_id": owner_id,
             "value_type": value_type,
             "visibility": visibility,
-            "retention": _short_text(raw.get("retention"), 320),
+            "retention": retention,
             "future_relevance": future_relevance,
             "status": "active",
             "created_seq": int(prior.get("created_seq", seq) or seq),
+            "created_round": int(prior.get("created_round", round_index) or round_index),
+            "last_updated_round": round_index,
             "updated_seq": seq,
         }
         if is_new:
             new_count += 1
-        accepted_schema.append({"op": "upsert", "id": concept_id, "new": is_new})
+        accepted_schema.append({"op": "upsert", "id": concept_id, "new": is_new, "source_refs": source_refs})
 
     for raw in proposal.get("state_ops", []):
         if not isinstance(raw, dict):
@@ -211,9 +241,18 @@ def apply_dynamic_state_proposal(
         if not concept_id or not isinstance(concept, dict) or concept.get("status") != "active":
             rejected.append({"kind": "state", "id": concept_id, "reason": "unknown_concept"})
             continue
+        source_refs = _validated_source_refs(raw.get("source_refs"), allowed_refs)
+        if not source_refs:
+            rejected.append({"kind": "state", "id": concept_id, "reason": "missing_or_invalid_source_ref"})
+            continue
+        if concept.get("visibility") == "private" and concept.get("owner_id") not in {
+            ref["node_id"] for ref in source_refs
+        }:
+            rejected.append({"kind": "state", "id": concept_id, "reason": "private_owner_not_source"})
+            continue
         if operation == "unset":
             values.pop(concept_id, None)
-            accepted_state.append({"op": "unset", "concept_id": concept_id})
+            accepted_state.append({"op": "unset", "concept_id": concept_id, "source_refs": source_refs})
             continue
         if operation != "set":
             rejected.append({"kind": "state", "id": concept_id, "reason": "unsupported_operation"})
@@ -222,17 +261,42 @@ def apply_dynamic_state_proposal(
         if not reason:
             rejected.append({"kind": "state", "id": concept_id, "reason": "missing_reason"})
             continue
-        supplied_sources = raw.get("source_node_ids", [])
-        sources = [str(item)[:120] for item in supplied_sources if str(item).strip()] if isinstance(supplied_sources, list) else []
-        sources = list(dict.fromkeys([*sources, *source_node_ids]))[:12]
+        value = raw.get("value")
+        if not _value_matches_type(value, str(concept.get("value_type", "text"))):
+            rejected.append({"kind": "state", "id": concept_id, "reason": "value_type_mismatch"})
+            continue
+        sources = list(dict.fromkeys(ref["node_id"] for ref in source_refs))[:12]
         values[concept_id] = {
-            "value": _bounded_value(raw.get("value")),
+            "value": _bounded_value(value),
             "confidence": round(max(0.0, min(1.0, _safe_float(raw.get("confidence"), 0.6))), 4),
             "reason": reason,
             "updated_seq": seq,
             "source_node_ids": sources,
+            "source_refs": source_refs,
+            "status": "confirmed",
         }
-        accepted_state.append({"op": "set", "concept_id": concept_id})
+        concept["last_updated_round"] = round_index
+        retention = concept.get("retention", {})
+        if isinstance(retention, dict) and retention.get("mode") == "rounds":
+            retention["expires_round"] = round_index + int(retention.get("ttl_rounds", 1))
+        accepted_state.append({"op": "set", "concept_id": concept_id, "source_refs": source_refs})
+
+    accepted_value_ids = {
+        str(operation.get("concept_id", ""))
+        for operation in accepted_state
+        if operation.get("op") == "set"
+    }
+    orphaned_new_ids = {
+        str(operation.get("id", ""))
+        for operation in accepted_schema
+        if operation.get("op") == "upsert" and operation.get("new") and operation.get("id") not in accepted_value_ids
+    }
+    if orphaned_new_ids:
+        for concept_id in orphaned_new_ids:
+            concepts.pop(concept_id, None)
+            values.pop(concept_id, None)
+            rejected.append({"kind": "schema", "id": concept_id, "reason": "new_concept_without_value"})
+        accepted_schema = [operation for operation in accepted_schema if operation.get("id") not in orphaned_new_ids]
 
     changed = bool(accepted_schema or accepted_state)
     if changed:
@@ -245,7 +309,9 @@ def apply_dynamic_state_proposal(
                 "seq": seq,
                 "schema_ops": accepted_schema,
                 "state_ops": accepted_state,
-                "source_node_ids": list(dict.fromkeys(source_node_ids))[:12],
+                "source_refs": _unique_refs(
+                    [ref for op in [*accepted_schema, *accepted_state] for ref in op.get("source_refs", [])]
+                ),
             }
         )
         state["history"] = history[-limits["max_history"] :]
@@ -259,6 +325,30 @@ def apply_dynamic_state_proposal(
         "active_concepts": sum(1 for item in concepts.values() if isinstance(item, dict) and item.get("status") == "active"),
     }
     return state, result
+
+
+def expire_dynamic_state(current: dict[str, Any], *, round_index: int, seq: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    state = _normalize_dynamic_state(current)
+    expired: list[str] = []
+    for concept_id, concept in state["concepts"].items():
+        if not isinstance(concept, dict) or concept.get("status") != "active":
+            continue
+        retention = concept.get("retention", {})
+        if not isinstance(retention, dict) or retention.get("mode") != "rounds":
+            continue
+        if round_index < int(retention.get("expires_round", round_index + 1) or round_index + 1):
+            continue
+        concept["status"] = "retired"
+        concept["updated_seq"] = seq
+        concept["retired_reason"] = "retention_expired"
+        state["values"].pop(concept_id, None)
+        expired.append(concept_id)
+    if expired:
+        state["version"] += 1
+        state["schema_version"] += 1
+        state["history"].append({"seq": seq, "expired": expired, "round": round_index, "source_refs": []})
+        state["history"] = state["history"][-state["limits"]["max_history"] :]
+    return state, {"changed": bool(expired), "expired_concepts": expired}
 
 
 def simulation_state_for_node(state: dict[str, Any], node_id: str) -> dict[str, Any]:
@@ -325,6 +415,82 @@ def _safe_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _retention_policy(value: Any, round_index: int) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    mode = str(value.get("mode", "")).strip().lower()
+    if mode not in {"persistent", "until_resolved", "rounds"}:
+        return None
+    policy: dict[str, Any] = {"mode": mode}
+    if mode == "rounds":
+        try:
+            ttl = int(value.get("ttl_rounds"))
+        except (TypeError, ValueError):
+            return None
+        if not 1 <= ttl <= 24:
+            return None
+        policy.update({"ttl_rounds": ttl, "expires_round": round_index + ttl})
+    return policy
+
+
+def _value_matches_type(value: Any, value_type: str) -> bool:
+    if value_type == "scalar":
+        return value is None or isinstance(value, (bool, int, float))
+    if value_type == "text":
+        return isinstance(value, str)
+    if value_type == "list":
+        return isinstance(value, list)
+    if value_type == "object":
+        return isinstance(value, dict)
+    return False
+
+
+def _allowed_source_refs(actions: list[dict[str, Any]]) -> set[tuple[str, int, int]]:
+    refs: set[tuple[str, int, int]] = set()
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        node_id = str(action.get("node_id", "")).strip()
+        try:
+            action_index = int(action.get("action_index"))
+            event_seq = int(action.get("event_seq"))
+        except (TypeError, ValueError):
+            continue
+        if node_id and action_index > 0 and event_seq > 0:
+            refs.add((node_id, action_index, event_seq))
+    return refs
+
+
+def _validated_source_refs(value: Any, allowed: set[tuple[str, int, int]]) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        node_id = str(item.get("node_id", "")).strip()
+        try:
+            action_index = int(item.get("action_index"))
+            event_seq = int(item.get("event_seq"))
+        except (TypeError, ValueError):
+            continue
+        key = (node_id, action_index, event_seq)
+        if key in allowed:
+            result.append({"node_id": node_id[:120], "action_index": action_index, "event_seq": event_seq})
+    return _unique_refs(result)[:12]
+
+
+def _unique_refs(refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, int]] = set()
+    for ref in refs:
+        key = (str(ref.get("node_id", "")), int(ref.get("action_index", 0)), int(ref.get("event_seq", 0)))
+        if key not in seen:
+            seen.add(key)
+            result.append(ref)
+    return result
 
 
 def _bounded_value(value: Any, *, depth: int = 0) -> Any:
