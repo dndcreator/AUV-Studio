@@ -113,6 +113,7 @@ def evaluate_long_horizon(
     checkpoints: list[dict[str, Any]],
     responses: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    real_mode = responses is not None
     responses = responses or {}
     max_context_tokens = int(scenario.get("max_context_tokens", 2400))
     checks: list[dict[str, Any]] = []
@@ -138,11 +139,12 @@ def evaluate_long_horizon(
             "context_within_budget": int(checkpoint["estimated_tokens"]) <= max_context_tokens,
         }
         model_checks: dict[str, bool] = {}
-        if checkpoint["id"] in responses:
+        if real_mode:
             folded = response.casefold()
             parsed = _response_json(response)
             decision = str(parsed.get("decision", "")).strip()
             model_checks = {
+                "response_available": bool(response.strip()),
                 "response_json_valid": bool(parsed),
                 "required_terms_used": all(term.casefold() in folded for term in required_terms),
                 "forbidden_terms_not_leaked": not any(term.casefold() in folded for term in forbidden_terms),
@@ -169,7 +171,7 @@ def evaluate_long_horizon(
     )
     return {
         "score": round(sum(1 for passed in flat if passed) / len(flat) * 100, 1) if flat else 0.0,
-        "mode": "real" if responses else "simulated",
+        "mode": "real" if real_mode else "simulated",
         "failures": failures,
         "checkpoints": checks,
         "stats": {

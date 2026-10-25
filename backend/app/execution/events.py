@@ -60,8 +60,13 @@ def emit_event(
     prev_hash: str = "",
 ) -> tuple[int, str]:
     now = datetime.now(timezone.utc)
+    event_payload = redact_secrets(payload)
+    # Internal checkpoints contain domain state, not transport configuration.
+    # Public event serializers remove this field; keep exact values for rollback.
+    if isinstance(payload.get("_rollback_snapshot"), dict):
+        event_payload["_rollback_snapshot"] = payload["_rollback_snapshot"]
     signed_payload, event_hash = append_trace_to_payload(
-        payload=redact_secrets(payload),
+        payload=event_payload,
         run_id=run_id,
         node_id=node_id,
         event=event,

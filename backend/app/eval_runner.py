@@ -81,13 +81,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Run status: {artifact['run']['status']}")
     if not scenario.get("writing_source"):
         print(f"Rule score: {artifact['deterministic_evaluation']['score']}/100")
+    behavior = artifact["deterministic_evaluation"].get("behavior")
+    if behavior:
+        print(f"Behavior validation: {behavior['status']}; long horizon: {behavior['long_horizon']['status']}")
     for item in (artifact.get("llm_judge") or {}).get("samples", []):
         score = f"{item['score']}/100" if item.get("score") is not None else "unavailable"
         print(f"{item['style']} quality: {score}")
     print(f"Calls: {artifact['usage']['calls']}; estimated tokens: {artifact['usage']['input_tokens'] + artifact['usage']['output_tokens']}")
     print(f"Estimated cost: ${artifact['usage']['estimated_cost_usd']:.6f}")
     print(f"Review: {result_path}")
-    return 0 if artifact["run"]["status"] == "succeeded" else 1
+    return 0 if artifact["run"]["status"] == "succeeded" and (not behavior or behavior["status"] not in {"fail", "inconclusive"}) else 1
 
 
 def _build_budget(args: argparse.Namespace) -> EvalBudget:
@@ -341,7 +344,23 @@ def _review_markdown(artifact: dict[str, Any]) -> str:
         lines.extend(["## Simulation", ""])
     for item in evaluation.get("actions", []):
         lines.extend([f"**{item['node_id']}**: {item['action']}", ""])
-    if artifact.get("final_text") and not artifact.get("narratives"):
+    behavior = evaluation.get("behavior")
+    if behavior:
+        lines.extend(["## Behavioral Evidence", "", f"Boundary: {behavior['information_boundary']['status']}",
+                      *[f"- {finding}" for finding in behavior['information_boundary']['findings']],
+                      *[f"- Propagation {row['marker']}: {row['status']}; missing={row['missing']}; premature={row['premature']}" for row in behavior['propagation']],
+                      f"Long horizon: {behavior['long_horizon']['status']} ({behavior['long_horizon']['observed_rounds']} rounds)",
+                      f"Misunderstanding review: {behavior['misunderstanding']['question']}",
+                      "Autonomy: manual review required; compare actions above with guidance below.",
+                      *[f"- Director: {text or '(no guidance)'}" for text in behavior['autonomy']['director_guidance']],
+                      *[f"- Router: {text}" for text in behavior['coordination']['routing']],
+                      *[f"- Scene goal: {text}" for text in behavior['coordination']['scene_goals']],
+                      f"- Role owners: {behavior['coordination']['roster']}",
+                      f"State snapshot: {behavior['state_snapshot']} (an incomplete run is not proof of forgetting).",
+                      "State (requires semantic review against actual actions):",
+                      *[f"- {row['id']}: {str(row['value'])[:160]} ({row['visibility']}; sources={row['sources']})" for row in behavior['state_evidence']], ""])
+    action_text = "\n".join(item["action"] for item in evaluation.get("actions", []))
+    if artifact.get("final_text") and not artifact.get("narratives") and str(artifact["final_text"]).strip() != action_text.strip():
         lines.extend(["## Outcome", "", artifact["final_text"], ""])
     for finding in evaluation.get("findings", []):
         lines.append(f"- {finding}")

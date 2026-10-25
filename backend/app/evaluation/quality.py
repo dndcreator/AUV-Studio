@@ -4,6 +4,7 @@ import json
 import re
 from collections import Counter
 from typing import Any
+from .behavior import evaluate_behavior
 
 
 def evaluate_run(
@@ -151,6 +152,7 @@ def evaluate_run(
             "dynamic_state": dynamic_stats,
         },
         "actions": actions,
+        **({"behavior": evaluate_behavior(run_detail, expected["behavior"], events or [])} if expected.get("behavior") else {}),
     }
 
 

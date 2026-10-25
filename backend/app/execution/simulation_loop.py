@@ -8,7 +8,7 @@ from ..schemas import WorkflowDefinition, WorkflowEdge, WorkflowNode
 from .dynamic_state import compact_dynamic_state
 from .entity_contracts import entity_action_contract
 from .scene_control import scene_setup_instruction
-from .perception import public_action
+from .perception import delivery_receipts, public_action
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,7 @@ def build_role_packet(node: WorkflowNode, memories: list[dict[str, Any]]) -> dic
     entity_type = str(node.config.get("entity_type") or node.config.get("role") or "individual")
     return {
         "node_id": node.id,
+        "role": str(node.config.get("role", "custom")),
         "identity": str(node.config.get("entity_name") or node.config.get("profile") or node.id),
         "entity_type": entity_type,
         "profile": str(node.config.get("entity_profile") or node.config.get("profile") or ""),
@@ -78,6 +79,7 @@ def build_node_descriptors(nodes: list[WorkflowNode]) -> list[dict[str, Any]]:
     return [
         {
             "node_id": node.id,
+            "role": str(node.config.get("role", "custom")),
             "identity": str(node.config.get("entity_name") or node.config.get("profile") or node.id)[:240],
             "entity_type": str(node.config.get("entity_type") or node.config.get("role") or node.type),
             "profile": str(node.config.get("entity_profile") or node.config.get("profile") or "")[:600],
@@ -124,6 +126,9 @@ def activation_instruction(
         + f"SHARED STATE:\n{json.dumps(build_shared_state_view(state, recent_actions), ensure_ascii=False, default=str)}\n\n"
         + "CONNECTIONS (directed delivery; no entity edges means a shared public scene; never grant private knowledge):\n"
         + json.dumps([edge.model_dump() for edge in connections or []], ensure_ascii=False) + "\n\n"
+        + "ACTUAL INPUT RECEIPTS (source event IDs supplied before each node's latest completed action; "
+        "null means not recorded, not zero deliveries; a possible channel does not imply delivery):\n"
+        + json.dumps(delivery_receipts(recent_actions), ensure_ascii=False) + "\n\n"
         f"AVAILABLE NODES:\n{json.dumps(build_node_descriptors(nodes), ensure_ascii=False, default=str)}"
     )
 
@@ -193,6 +198,12 @@ def action_instruction(context_packet: dict[str, Any], role_packet: dict[str, An
         "shared_effect_claim (a claim about effects on the shared situation, not automatically accepted as fact), and "
         "episode_signal (continue|ready). Incoming interactions describe delivered messages, not compulsory decisions. "
         "A connection never grants access to another participant's unspoken intentions or private observations.\n\n"
+        "In directed communication mode, send only through your listed outgoing channels. With no outgoing channel, "
+        "you may plan or propose a message but cannot claim it was delivered or that a recipient received it. "
+        "Incoming messages do not create a reverse channel.\n\n"
+        "Your explicit ROLE.role is your own responsibility, not an absent participant to hand work to. "
+        "Do not silently invent extra participants to perform an existing role. Unmodeled contacts can be proposed, "
+        "not claimed as completed communications.\n\n"
         f"CONTEXT:\n{json.dumps(context_packet, ensure_ascii=False, default=str)}\n\n"
         f"ROLE:\n{json.dumps(role_packet, ensure_ascii=False, default=str)}"
     )

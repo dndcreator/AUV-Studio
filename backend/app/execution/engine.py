@@ -325,6 +325,7 @@ class WorkflowEngine:
         summary = next((node for node in workflow.nodes if node.id.startswith("summary_")), None)
         resume = context.pop("_continuous_resume", {})
         recent_actions = list(resume.get("actions", [])) if isinstance(resume, dict) and isinstance(resume.get("actions"), list) else []
+        context["simulation_actions"] = recent_actions
         simulation_seq = int(resume.get("simulation_seq", 0) or 0) if isinstance(resume, dict) else 0
         guidance = ""
         director_override_cursor = 0
@@ -447,6 +448,18 @@ class WorkflowEngine:
                     scene_contract=context["_scene_control"]["contract"],
                 )
                 context_packet["interactions"] = interactions
+                context_packet["communication"] = {
+                    "mode": "directed" if communication_edges else "shared_scene",
+                    "incoming": [edge.model_dump() for edge in communication_edges if edge.target == node.id],
+                    "outgoing": [edge.model_dump() for edge in communication_edges if edge.source == node.id],
+                    "known_participants": [
+                        {"node_id": peer.id, "name": str(peer.config.get("entity_name") or peer.id),
+                         **({"role": str(peer.config.get("role", "custom"))} if peer.id == node.id else {})}
+                        for peer in entities if peer.id == node.id or any(
+                            {edge.source, edge.target} == {node.id, peer.id} for edge in communication_edges
+                        )
+                    ],
+                }
                 role_packet = build_role_packet(node, memories)
                 runtime_input = {
                     **resolve_inputs(node, execution_context),
@@ -480,6 +493,10 @@ class WorkflowEngine:
                         "round": round_index,
                         "action_index": action_index,
                         "event_seq": success_seq,
+                        "received_event_seqs": list(dict.fromkeys(
+                            item["event_seq"] for item in context_packet["recent_actions"]
+                            if item.get("node_id") != node.id and isinstance(item.get("event_seq"), int)
+                        )),
                         "node_id": node.id,
                         "actor": node_subject(node),
                         "participation": output.get("participation", "act"),
@@ -568,6 +585,11 @@ class WorkflowEngine:
                     recent_actions=recent_actions,
                     round_index=round_index,
                     max_actions=policy.max_actions,
+                    connections=[edge.model_dump() for edge in communication_edges],
+                    participants=[{"node_id": participant.id, "name": node_subject(participant),
+                                   "role": str(participant.config.get("role", "custom")),
+                                   "responsibilities": participant.config.get("responsibilities", [])}
+                                  for participant in entities],
                 ) + f"\n\n{state_coder_prompt}"
                 response = await self.provider.chat(
                     model="",
@@ -910,11 +932,19 @@ class WorkflowEngine:
                     last_event_hash=last_event_hash,
                 )
             except Exception as exc:  # noqa: BLE001
+                db.rollback()
                 run.status = "failed"
-                run.error_json = serialize({"message": str(exc)})
+                error = {"type": type(exc).__name__, "message": str(exc).strip() or type(exc).__name__}
+                run.error_json = serialize(error)
+                run.output_json = serialize({
+                    "actions": context.get("simulation_actions", []),
+                    "simulation": context.get("_simulation", {}),
+                    "scene_control": context.get("_scene_control", {}),
+                })
                 run.ended_at = datetime.now(timezone.utc)
                 db.add(run)
-                db.commit()
+                emit_event(db, run_id, "run_control", "failed", {"error": error}, caused_by="continuous_failure",
+                           prev_hash=load_last_event_hash(db, run_id)[1])
                 return run_id
         human_resume_emitted = False
         pending_human_at_start = context.get("_human_response")

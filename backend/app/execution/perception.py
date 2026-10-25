@@ -10,6 +10,17 @@ PUBLIC_FIELDS = ("round", "action_index", "event_seq", "node_id", "actor", "part
 PRIVATE_FIELDS = ("intent", "observation", "self_update", "turn_delta", "shared_effect_claim")
 
 
+def delivery_receipts(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest = {}
+    for action in actions:
+        node_id = str(action.get("node_id", ""))
+        if node_id:
+            receipts = action.get("received_event_seqs")
+            latest[node_id] = {"node_id": node_id, "action_index": action.get("action_index"),
+                               "received_event_seqs": list(receipts) if isinstance(receipts, list) else None}
+    return list(latest.values())
+
+
 def public_action(action: dict[str, Any]) -> dict[str, Any]:
     """Explicit projection: future internal fields must not become peer-visible by default."""
     result = {key: action[key] for key in PUBLIC_FIELDS if key in action}

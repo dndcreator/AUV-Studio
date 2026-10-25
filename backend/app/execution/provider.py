@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import httpx
 
@@ -101,7 +101,7 @@ class OpenAICompatibleProvider:
                 except httpx.HTTPStatusError as exc:
                     detail = _response_error_detail(resp)
                     raise ProviderError(
-                        f"Provider request failed: HTTP {resp.status_code} for {url}; model={effective_model}; detail={detail}",
+                        f"Provider request failed: HTTP {resp.status_code} for {_endpoint_label(url)}; model={effective_model}; detail={detail}",
                         retryable=resp.status_code in {408, 429} or resp.status_code >= 500,
                     ) from exc
                 data = resp.json()
@@ -128,10 +128,25 @@ class OpenAICompatibleProvider:
                     await asyncio.sleep(2**attempt)
                 else:
                     break
+        if isinstance(last_error, httpx.TimeoutException):
+            description = f"{type(last_error).__name__}: request timed out; timeout_seconds={self.timeout_seconds}; endpoint={_endpoint_label(url)}"
+        elif isinstance(last_error, httpx.RequestError):
+            description = f"{type(last_error).__name__}: network request failed; endpoint={_endpoint_label(url)}"
+        else:
+            description = str(last_error).strip() or (type(last_error).__name__ if last_error is not None else "no request attempt")
         raise ProviderError(
-            f"Provider request failed: {last_error}",
+            f"Provider request failed: {description}",
             retryable=not isinstance(last_error, ProviderError) or last_error.retryable,
         ) from last_error
+
+
+def _endpoint_label(value: str) -> str:
+    parts = urlsplit(value)
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{host}:{parts.port}" if parts.port else host
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
 def _response_error_detail(resp: httpx.Response) -> str:

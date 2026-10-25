@@ -113,3 +113,30 @@ def test_long_horizon_real_mode_uses_only_sparse_budgeted_calls(monkeypatch) -> 
     )
     assert artifact["usage"]["calls"] == 4
     assert artifact["evaluation"]["score"] == 100
+
+
+def test_real_provider_failure_retains_partial_usage_and_missing_probes(monkeypatch) -> None:
+    import app.long_horizon_eval as runner
+
+    class Provider:
+        api_key = "test-only"
+        provider_kind = "openai_compatible"
+        base_url = "https://model.invalid/v1"
+        default_model = "test"
+
+        async def chat(self, **_kwargs):
+            raise RuntimeError("request timed out")
+
+    class Db:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runner, "build_provider", Provider)
+    monkeypatch.setattr(runner, "SessionLocal", Db)
+    monkeypatch.setattr(runner, "apply_stored_model_config", lambda *_args: None)
+    scenario = _load_scenario()
+    artifact = asyncio.run(_run_real(scenario, build_long_horizon_checkpoints(scenario), EvalBudget(max_total_tokens=16000)))
+    assert artifact["error"]["type"] == "RuntimeError"
+    assert artifact["usage"]["calls"] == 1
+    assert artifact["evaluation"]["mode"] == "real"
+    assert artifact["evaluation"]["score"] < 100

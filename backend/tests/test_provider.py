@@ -28,6 +28,37 @@ class _Response:
         return self._data
 
 
+@pytest.mark.parametrize("error_type", [httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, httpx.ConnectError])
+def test_empty_transport_errors_have_safe_actionable_diagnostics(monkeypatch, error_type) -> None:
+    calls = []
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+        async def post(self, url, **_kwargs):
+            calls.append(url)
+            raise error_type("", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", Client)
+    provider = OpenAICompatibleProvider("https://user:hidden-password@model.invalid/v1", "secret-key", 12, 0)
+    with pytest.raises(ProviderError) as exc:
+        asyncio.run(provider.chat("model", "system", "user"))
+    message = str(exc.value)
+    assert error_type.__name__ in message
+    assert "https://model.invalid/v1/chat/completions" in message
+    assert "hidden-password" not in message and "secret-key" not in message
+    if issubclass(error_type, httpx.TimeoutException):
+        assert "timeout_seconds=12" in message
+    assert len(calls) == 1
+
+
 class _Client:
     calls: list[dict] = []
     response: dict = {}

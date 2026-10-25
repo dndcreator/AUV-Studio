@@ -12,7 +12,7 @@ from app.execution.engine import WorkflowEngine
 from app.execution.context_book import build_scene_context_pack
 from app.execution.graph import WorkflowValidationError, validate_workflow
 from app.execution.memory import select_memories_for_node
-from app.execution.perception import actions_for_node, incoming_interactions, participant_context, public_action
+from app.execution.perception import actions_for_node, delivery_receipts, incoming_interactions, participant_context, public_action
 from app.models import NodeRunRecord, RunRecord
 from app.schemas import EnvironmentSpec, RunRequest, WorkflowDefinition, WorkflowEdge
 from app.service import verify_run_audit
@@ -43,6 +43,10 @@ def test_public_projection_and_directed_delivery_do_not_share_internal_fields():
     assert "PUBLIC_FINDING" in json.dumps(actions_for_node([action], "c", []))
     assert "SECRET" not in json.dumps(actions_for_node([action], "c", []))
     assert action["future_field"] == "SECRET_FUTURE"
+    assert delivery_receipts([{"node_id": "a"}, {"node_id": "b", "received_event_seqs": []}]) == [
+        {"node_id": "a", "action_index": None, "received_event_seqs": None},
+        {"node_id": "b", "action_index": None, "received_event_seqs": []},
+    ]
 
 
 def test_conditional_messages_and_template_context_cannot_bypass_projection():
@@ -126,8 +130,11 @@ def test_real_continuous_runtime_isolates_history_templates_and_owner_recall(con
             if row.node_id in {"b", "c"}:
                 assert "SECRET" not in row.input_json
                 assert data["probe"] is None
+                assert all("role" not in peer for peer in data["context"]["communication"]["known_participants"]
+                           if peer["node_id"] != row.node_id)
             if row.node_id == "c" and connected:
                 assert "PUBLIC_FINDING" not in row.input_json
+                assert data["context"]["communication"]["outgoing"] == []
             if row.node_id == "b":
                 assert "PUBLIC_FINDING" in row.input_json
                 assert bool(data["_interactions"]) is connected

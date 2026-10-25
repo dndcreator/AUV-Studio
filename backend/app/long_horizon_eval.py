@@ -124,12 +124,17 @@ async def _run_real(
         provider.thinking_mode = "disabled"
     limited = BudgetedProvider(provider, budget)
     responses: dict[str, str] = {}
+    error = None
     for checkpoint in checkpoints:
-        response = await limited.chat(
-            model="",
-            system_prompt="You evaluate one sparse checkpoint in a distributed long-horizon simulation.",
-            user_prompt=probe_prompt(checkpoint),
-        )
+        try:
+            response = await limited.chat(
+                model="",
+                system_prompt="You evaluate one sparse checkpoint in a distributed long-horizon simulation.",
+                user_prompt=probe_prompt(checkpoint),
+            )
+        except Exception as exc:  # Retain partial evidence and reserved usage; never retry automatically.
+            error = {"checkpoint": checkpoint["id"], "type": type(exc).__name__, "message": str(exc)[:500]}
+            break
         responses[checkpoint["id"]] = str(response.get("content", ""))
     evaluation = evaluate_long_horizon(scenario, checkpoints, responses)
     model = {
@@ -138,7 +143,9 @@ async def _run_real(
         "model": provider.default_model,
         "thinking_mode": getattr(provider, "thinking_mode", None),
     }
-    return _artifact(scenario, budget, evaluation, usage=limited.usage.model_dump(budget), model=model)
+    artifact = _artifact(scenario, budget, evaluation, usage=limited.usage.model_dump(budget), model=model)
+    artifact["error"] = error
+    return artifact
 
 
 def _artifact(
@@ -186,6 +193,8 @@ def _markdown(artifact: dict[str, Any]) -> str:
         "",
     ]
     lines.extend([f"- {item}" for item in evaluation["failures"]] or ["- None"])
+    if artifact.get("error"):
+        lines.extend(["", f"Provider failure: {artifact['error']}"])
     lines.extend(["", "## Checkpoints", ""])
     for item in evaluation["checkpoints"]:
         lines.extend(

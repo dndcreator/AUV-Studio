@@ -53,6 +53,8 @@ def scene_audit_instruction(
     recent_actions: list[dict[str, Any]],
     round_index: int,
     max_actions: int,
+    connections: list[dict[str, Any]] | None = None,
+    participants: list[dict[str, Any]] | None = None,
 ) -> str:
     first_round = int(scene_control.get("last_audited_round", 0)) + 1
     earlier = [item for item in recent_actions if int(item.get("round", 0)) < first_round][-4:]
@@ -61,7 +63,10 @@ def scene_audit_instruction(
         "Audit the boundary of this distributed process episode. Nodes own decisions and actions; do not "
         "invent their actions, conclusions, plot, or research findings. Private intent, observation and self_update "
         "are audit-only knowledge: do not disclose them in shared guidance, contracts or summaries unless the actor "
-        "has publicly revealed them through observable action. Decide whether the current episode "
+        "has publicly revealed them through observable action. Respect messages actually delivered on the listed "
+        "directed channels. A public action "
+        "does not imply every participant received it. Do not turn a one-way channel into a return channel, "
+        "invent an extra holder of an existing role, or relay message contents through global guidance. Decide whether the current episode "
         "should continue, transition to a new macro episode, or stop. This applies to simulation, research, "
         "collaboration, and roleplay. Return JSON only: "
         '{"decision":"continue|transition|stop","guidance":"short boundary constraint only",'
@@ -78,6 +83,10 @@ def scene_audit_instruction(
         "If two consecutive completed rounds stagnate (including the previous counter), consider changing pacing "
         "or progress_scale, requesting closure, transition, or stopping; a justified continue is allowed. "
         "Before deciding to continue, separately check the scene exit_conditions and the overall task completion_condition. "
+        "Resolve role descriptions against PARTICIPANT ROSTER: the listed owner already performs that role; "
+        "do not create an offscreen duplicate to receive the deliverable. Use received_event_seqs as evidence of "
+        "which messages were actually supplied before a participant acted, not merely a possible graph path. "
+        "If the completion condition asks for a proposal, do not extend it into execution and acknowledgment. "
         "Listed exit conditions are alternatives unless the contract explicitly requires all. Once a sufficient exit "
         "condition and the task goal are met, stop even if more natural conversation is possible. New small changes do "
         "not by themselves justify extending a completed task. If only the scene is complete and the task remains open, "
@@ -89,7 +98,9 @@ def scene_audit_instruction(
         f"Hard action limit: {max_actions}. Turn Delta and progress verdicts are runtime signals, not durable facts.\n\n"
         f"SCENE CONTROL:\n{json.dumps(scene_control, ensure_ascii=False, default=str)}\n\n"
         f"CURRENT MACRO STATE:\n{json.dumps(state, ensure_ascii=False, default=str)}\n\n"
+        f"PARTICIPANT ROSTER:\n{json.dumps(participants or [], ensure_ascii=False, default=str)}\n\n"
         f"ACTUAL NODE OUTPUTS:\n{json.dumps(earlier + pending, ensure_ascii=False, default=str)}"
+        + f"\nCOMMUNICATION CHANNELS (empty means shared public scene):\n{json.dumps(connections or [], ensure_ascii=False)}"
     )
 
 

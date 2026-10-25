@@ -64,6 +64,8 @@
 
 后端重启会把上次未完成的 `pending/queued/running/stopping` 运行标为 failed，错误码为 `RUNTIME_INTERRUPTED`，并追加可追溯事件；不会自动重新入队。已完成输出和检查点保留，`waiting_human` 仍可通过人工回复接口继续。
 
+连续循环异常时，运行详情 `output` 保留已接受的 `simulation`、完成的 `actions` 和 `scene_control`；`error` 包含 `type/message`，并追加 `run_control/failed` 审计事件。内部 `actions.received_event_seqs` 来自当轮实际输入，不是模型声明；该元数据不进入其他 Agent 的公开行动投影。
+
 ## 4. 平台能力
 
 - `GET /health` 健康检查

@@ -3,6 +3,26 @@
 本文件用于持续记录 AUV 的产品能力、接口、前端入口和重要实现决策，避免后续遗忘上下文。
 
 ## [Unreleased]
+### Behavioral Root Causes And Failure Preservation (2026-10-25 20:32 +08:00)
+
+- Located an audit-input gap: the auditor had action text and edge IDs but lacked a functional-role roster and evidence of actual input delivery. Added a minimal roster and runtime-derived `received_event_seqs` to existing action records; router reads the same receipts. Missing receipts remain unknown, not an empty delivery list. No extra LLM calls, domain-specific stopping rules or state store.
+- Audit prompts now resolve responsibilities to existing role owners and distinguish proposal completion from subsequent execution/acknowledgment. Directed channels alone do not establish who knows a message. Private-role isolation remains unchanged.
+- Fixed apparent state loss on continuous-loop failure: router/Agent/audit/budget exceptions now preserve accepted Dynamic State, completed actions and scene controls, and append a signed terminal event. Checkpoints stay rollback-capable; unaccepted action claims are not promoted to facts.
+- Failure snapshots use the same owner/audit storage semantics as successful runs; generic credential-key redaction must not erase legitimate domain concept names such as `mina_secret`. Internal `_rollback_snapshot` data also bypasses this lossy heuristic and stays hash-signed; existing public event serializers remove it. Private values remain protected by per-node projection, while transport credentials outside internal checkpoints remain redacted.
+- Blank transport errors now identify the exception class, configured timeout and credential/query-stripped endpoint. No timeout increase or new retries. The original external request failure cannot be retrospectively diagnosed from its lost details.
+- Acceptance evidence adds role owners, receipt references and snapshot availability. An aborted run with 24 observed rounds is incomplete, not a completed long-horizon test. Fixed scenario is now version 3; earlier paid samples remain version-1 evidence.
+- Verified 207 backend tests, 59 frontend tests, production build, Python compilation and whitespace checks. Added four failure-stage/state/audit/rollback cases and five blank transport-error cases; extended 24-round receipt/roster coverage. No new paid calls, dependencies or frontend explanatory copy. Semantic improvement awaits a separately authorized real-model retest.
+
+### Behavioral Acceptance And Evidence (2026-10-25 20:06 +08:00)
+
+- Added a fixed private-knowledge/mistaken-belief/one-way handoff scenario and separate evidence checks for input leakage, causally delivered information, missing coverage and human-reviewed autonomy. Intent declarations and generic rule scores do not establish autonomous behavior.
+- Added a 24-round / 72-action real-engine offline stress test covering durable public/private concepts, repeated invalid state sources, unchanged world coordinates, role ownership and audit integrity. Existing 60-step sparse material preparation remains distinct from a long real-model rollout.
+- Actual short-scene testing used 15 requests and 38,376 recorded tokens, estimated $0.050712 at the configured test prices. The first five-call sample corrected a misconception and produced an agent-initiated document check; the ten-call retest exhausted its remaining call allowance after a role-holder confusion and Director topology error. Neither sample exposed the private markers to peers.
+- Added explicit self-role labels, known-neighbor names/IDs and inbound/outbound communication metadata, then passed the same directed topology to boundary auditing. Neighbors do not automatically receive another node's true role label. Prompts forbid inventing another holder of an existing role, claiming nonexistent delivery or using global guidance as an implicit return channel. Fixed exact-identifier alias false negatives; uncovered behavior makes the CLI exit nonzero. These final role/audit corrections received offline regression, not another paid retest.
+- A separate bounded sparse real-model attempt failed at the Provider; the older path lost partial usage/evidence. Fixed partial-result retention and made unavailable real responses fail explicitly instead of falling back to simulated success. No further paid retries were attempted.
+- Kept ordinary tests zero-cost, reused one compact latest short-scenario record, removed duplicate Outcome text, and documented actual results/limitations in `docs/evaluations/2026-10-25-behavior-validation.md`.
+- Verified 197 backend tests, 59 frontend tests, production build, Python compilation and whitespace checks. Real long-horizon stability is still unproven; offline stress success is not a model-quality guarantee. No frontend feature explanations or new configuration panels.
+
 ### Directed Perception And Live Synchronization (2026-10-25 19:00 +08:00)
 
 - Confirmed that continuous turns ignored Canvas edges, copied private intent/observation fields to peers, recalled other characters' memories by relevance, and paced Live with a fixed six-second queue. Kept within-run execution serial; cross-run worker concurrency is not Agent parallelism.
