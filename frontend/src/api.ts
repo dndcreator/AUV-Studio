@@ -36,7 +36,29 @@ import type {
   WorkflowSummary
 } from "./types";
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api").replace(/\/$/, "");
+
+export function apiAssetUrl(value: string): string {
+  return value.startsWith("/api/") ? `${API_BASE}${value.slice(4)}` : value;
+}
+
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function responseError(response: Response): Promise<ApiError> {
+  const raw = await response.text();
+  let message = raw || `HTTP ${response.status}`;
+  try {
+    const body = JSON.parse(raw);
+    if (typeof body.detail === "string") message = body.detail;
+    else if (Array.isArray(body.detail)) message = body.detail.map((item: { msg?: string }) => item.msg || "Invalid input").join("; ");
+  } catch { /* Non-JSON server errors retain their text. */ }
+  return new ApiError(message, response.status);
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -44,8 +66,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    throw await responseError(res);
   }
   return (await res.json()) as T;
 }
@@ -57,7 +78,7 @@ export const api = {
       headers: { "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(file.name) },
       body: file
     });
-    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+    if (!res.ok) throw await responseError(res);
     return (await res.json()) as EvidencePack;
   },
   createWorkflow: (data: WorkflowDefinition) =>
@@ -137,7 +158,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ node_id: nodeId ?? null })
     }),
-  getRunCheckpoints: (runId: string, limit = 80) => request<RunCheckpoints>(`/runs/${runId}/checkpoints?limit=${limit}`),
+  getRunCheckpoints: (runId: string, limit = 80, signal?: AbortSignal) => request<RunCheckpoints>(`/runs/${runId}/checkpoints?limit=${limit}`, { signal }),
   rollbackRun: (runId: string, eventSeq: number, reason?: string) =>
     request<RollbackResponse>(`/runs/${runId}/rollback`, {
       method: "POST",
@@ -158,13 +179,15 @@ export const api = {
       method: "POST"
     }),
   getRun: (runId: string) => request<RunDetail>(`/runs/${runId}`),
-  getRunEvents: (runId: string, afterSeq: number) =>
-    request<{ run_id: string; events: RunEvent[] }>(`/runs/${runId}/events?after_seq=${afterSeq}&limit=500`),
+  getRunStatus: (runId: string, signal?: AbortSignal) =>
+    request<{ run_id: string; status: RunDetail["status"] }>(`/runs/${runId}/status`, { signal }),
+  getRunEvents: (runId: string, afterSeq: number, signal?: AbortSignal) =>
+    request<{ run_id: string; events: RunEvent[] }>(`/runs/${runId}/events?after_seq=${afterSeq}&limit=500`, { signal }),
   getFullLog: (runId: string, format: "markdown" | "json" = "markdown") =>
     request<FullLog>(`/runs/${runId}/full-log?format=${format}`),
   getRunTraceEvent: (runId: string, seq: number) => request<TraceEventContext>(`/runs/${runId}/trace/${seq}`),
   verifyRunAudit: (runId: string) => request<AuditVerify>(`/runs/${runId}/audit/verify`),
-  getRunMetrics: (runId: string) => request<RunMetrics>(`/runs/${runId}/metrics`),
+  getRunMetrics: (runId: string, signal?: AbortSignal) => request<RunMetrics>(`/runs/${runId}/metrics`, { signal }),
   compareRuns: (runA: string, runB: string) =>
     request<RunCompare>(`/compare-runs?run_a=${encodeURIComponent(runA)}&run_b=${encodeURIComponent(runB)}`),
   generateReport: (runId: string, payload: RunReportRequest) =>

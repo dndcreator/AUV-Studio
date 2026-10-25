@@ -23,12 +23,13 @@ def evaluate_run(
             contract_failures += 1
             continue
         action = str(output.get("action") or output.get("content") or "").strip()
-        public_update = str(output.get("public_state_update") or "").strip()
-        proposal = str(output.get("proposal_summary") or "").strip()
-        if not action or not public_update or not proposal:
+        public_update = str(output.get("shared_effect_claim") or output.get("public_state_update") or "").strip()
+        proposal = str(output.get("intent") or output.get("proposal_summary") or "").strip()
+        participation = str(output.get("participation", "act"))
+        if participation not in {"act", "observe", "wait"} or (participation == "act" and (not action or not proposal)):
             contract_failures += 1
         if action:
-            actions.append({"node_id": str(item.get("node_id")), "action": action, "public_state_update": public_update})
+            actions.append({"node_id": str(item.get("node_id")), "action": action, "public_state_update": public_update, "turn_delta": str(output.get("turn_delta", ""))})
 
     normalized = [_normalize(row["action"]) for row in actions]
     unique_ratio = len(set(normalized)) / len(normalized) if normalized else 0.0
@@ -46,6 +47,18 @@ def evaluate_run(
         audits = [event for event in events or [] if event.get("event") == "episode_audited"]
         last_decision = str((audits[-1].get("payload") or {}).get("decision", "")) if audits else ""
         checks["director_confirmed_completion"] = last_decision == "stop"
+    if expected.get("require_scene_control"):
+        actor_runs = [item for item in node_runs if item.get("node_id") in actor_ids and item.get("status") == "succeeded"]
+        audits = [event.get("payload", {}) for event in events or [] if event.get("event") == "episode_audited"]
+        checks["scene_contract_reaches_each_turn"] = bool(actor_runs) and all(
+            isinstance(item.get("input", {}).get("context", {}).get("scene_contract"), dict)
+            and bool(item["input"]["context"]["scene_contract"].get("goal")) for item in actor_runs
+        )
+        checks["turn_delta_is_available"] = bool(actor_runs) and all(isinstance(item.get("output", {}).get("turn_delta"), str) for item in actor_runs)
+        checks["director_assesses_each_round"] = bool(audits) and all(
+            bool(item.get("progress_assessment", {}).get("round_progress"))
+            and not item["progress_assessment"].get("unassessed_rounds") for item in audits
+        )
     dynamic_expected = expected.get("dynamic_state", {})
     dynamic_stats: dict[str, Any] = {}
     if isinstance(dynamic_expected, dict) and dynamic_expected:
@@ -118,6 +131,13 @@ def evaluate_run(
         findings.append("At least one private Dynamic State value is not sourced from its owner.")
     if checks.get("dynamic_state_avoids_transient_details") is False:
         findings.append("Dynamic State retained transient psychological, stylistic, or gesture detail.")
+    for key, message in {
+        "scene_contract_reaches_each_turn": "At least one actor turn lacked a Scene Contract.",
+        "turn_delta_is_available": "At least one actor turn lacked the Turn Delta field.",
+        "director_assesses_each_round": "The Director omitted at least one completed round from the progress audit.",
+    }.items():
+        if checks.get(key) is False:
+            findings.append(message)
     return {
         "score": score,
         "checks": checks,
@@ -134,15 +154,17 @@ def evaluate_run(
     }
 
 
-async def judge_run(provider: Any, rubric: dict[str, Any], full_log: str) -> dict[str, Any]:
+async def judge_run(provider: Any, rubric: dict[str, Any], record: str) -> dict[str, Any]:
     prompt = (
         "Evaluate this fixed multi-agent simulation. Return JSON only with keys: "
-        "verdict (pass|mixed|fail), overall_score (0-100), role_consistency (0-10), "
-        "progression (0-10), node_autonomy (0-10), continuity (0-10), readability (0-10), "
-        "state_precision (0-10), provenance (0-10), "
-        "strengths (array), problems (array), recommendation (string). "
-        "Do not reward fluent prose if actors do not make autonomous, state-changing decisions.\n\n"
-        f"RUBRIC:\n{json.dumps(rubric, ensure_ascii=False)}\n\nFULL LOG:\n{full_log[:24000]}"
+        "verdict (pass|mixed|fail), overall_score (0-100), problems (up to 3 brief items), "
+        "recommendation (one sentence). "
+        "Do not reward verbosity or fluent repetition. Judge progress relative to the stated scene goals: micro changes "
+        "and justified waiting can be appropriate, without forced conflict or dramatic escalation. Check that reported "
+        "actions remain role-consistent. If literary samples are present, judge whether each reads as a finished work "
+        "rather than a report, follows its requested style and form, differs meaningfully from the other styles, and "
+        "preserves the observed outcomes. Do not claim to verify hidden state or private context absent from this record.\n\n"
+        f"RUBRIC:\n{json.dumps(rubric, ensure_ascii=False)}\n\nTEST RECORD:\n{record}"
     )
     response = await provider.chat(
         model="",

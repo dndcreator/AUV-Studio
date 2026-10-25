@@ -1,5 +1,19 @@
 {
   "subtitle": "Visual Multi-Agent Simulation",
+  "studio": {
+    "language": "Language",
+    "projectActions": "Project actions",
+    "edit": "Edit",
+    "open": "Open",
+    "worldBook": "World Book",
+    "eventCount": "{{count}} events",
+    "mode": { "research": "Research", "roleplay": "Roleplay", "custom": "Custom" },
+    "status": {
+      "idle": "Standby", "queued": "Queued", "pending": "Preparing", "running": "Running",
+      "waiting_human": "Awaiting confirmation", "succeeded": "Completed", "failed": "Failed",
+      "stopping": "Stopping", "stopped": "Stopped", "cancelled": "Cancelled", "skipped": "Skipped"
+    }
+  },
   "create": "Create",
   "advanced": "Advanced",
   "modelSetup": "Model",

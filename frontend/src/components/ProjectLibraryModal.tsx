@@ -1,5 +1,6 @@
 import type { Lang } from "../appTypes";
 import type { WorkflowSummary } from "../types";
+import { StudioIcon } from "./StudioIcon";
 
 type Props = {
   open: boolean;
@@ -26,13 +27,17 @@ export function ProjectLibraryModal(props: Props) {
           </div>
           <button className="btn" onClick={props.onClose}>{props.copy("关闭", "Close")}</button>
         </div>
-        <input
-          className="project-search"
-          value={props.search}
-          onChange={(event) => props.onSearchChange(event.target.value)}
-          placeholder={props.copy("搜索项目", "Search projects")}
-          autoFocus
-        />
+        <div className="project-search-field">
+          <StudioIcon name="search" />
+          <input
+            className="project-search"
+            value={props.search}
+            onChange={(event) => props.onSearchChange(event.target.value)}
+            placeholder={props.copy("搜索项目", "Search projects")}
+            aria-label={props.copy("搜索项目", "Search projects")}
+            autoFocus
+          />
+        </div>
         <div className="project-list">
           {props.loading ? <div className="empty-hint">{props.copy("正在加载项目...", "Loading projects...")}</div> : null}
           {!props.loading && props.projects.length === 0 ? (

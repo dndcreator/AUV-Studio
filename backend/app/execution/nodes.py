@@ -333,8 +333,7 @@ def _render_environment(environment: Any) -> str:
 def _render_memory(memories: Any, limit: int = 8) -> str:
     if not isinstance(memories, list):
         return ""
-    buckets: dict[str, list[str]] = {"fact": [], "state": [], "character": []}
-    other: list[str] = []
+    buckets: dict[str, list[str]] = {"fact": [], "character": []}
     for item in memories[-max(1, min(limit, 30)) :]:
         if not isinstance(item, dict):
             continue
@@ -355,16 +354,13 @@ def _render_memory(memories: Any, limit: int = 8) -> str:
             meta.append(f"importance={importance}")
         suffix = f" ({', '.join(meta)})" if meta else ""
         line = f"- [{label}]{suffix} {content[:360]}"
-        if kind in buckets:
-            buckets[kind].append(line)
-        else:
-            other.append(line)
+        if kind not in buckets:
+            continue
+        buckets[kind].append(line)
     lines: list[str] = []
     sections = [
         ("Facts", buckets["fact"]),
-        ("Current State", buckets["state"]),
         ("Character State", buckets["character"]),
-        ("Other", other),
     ]
     for title, rows in sections:
         if rows:
@@ -452,9 +448,9 @@ def _render_simulation(simulation: Any) -> str:
     mode = str(simulation.get("mode", "")).strip()
     question = str(simulation.get("research_question", "")).strip()
     semantics = simulation.get("semantics", {})
-    variables = simulation.get("variables", {})
+    runtime_metrics = simulation.get("runtime_metrics", {})
     world_state = simulation.get("world_state", {})
-    state_memory = simulation.get("state_memory", {})
+    dynamic_state = simulation.get("dynamic_state", {})
     evidence = simulation.get("evidence", {})
     phase_index = int(simulation.get("current_phase_index", 0) or 0)
     phases = simulation.get("phases", [])
@@ -479,9 +475,9 @@ def _render_simulation(simulation: Any) -> str:
             phase_name = str(phases[phase_index].get("name", "")).strip()
             if phase_name:
                 lines.append(f"Current Phase: {phase_name}")
-    if isinstance(variables, dict) and variables:
-        vars_part = ", ".join([f"{k}={v}" for k, v in variables.items()])
-        lines.append(f"Variables: {vars_part}")
+    if isinstance(runtime_metrics, dict) and runtime_metrics:
+        metrics_part = ", ".join([f"{k}={v}" for k, v in runtime_metrics.items()])
+        lines.append(f"Runtime Metrics: {metrics_part}")
     if isinstance(world_state, dict) and world_state:
         world_parts = []
         for key in ["current_time", "current_location", "temporal_scope", "spatial_scope"]:
@@ -490,19 +486,17 @@ def _render_simulation(simulation: Any) -> str:
                 world_parts.append(f"{key}={value}")
         if world_parts:
             lines.append(f"World State: {', '.join(world_parts)}")
-        conditions = world_state.get("conditions", [])
-        if isinstance(conditions, list) and conditions:
-            lines.append("World Conditions:")
-            lines.extend([f"- {str(item)}" for item in conditions[-8:]])
-        active_events = world_state.get("active_events", [])
-        if isinstance(active_events, list) and active_events:
-            lines.append("Active Events:")
-            lines.extend([f"- {str(item)}" for item in active_events[-8:]])
-    if isinstance(state_memory, dict):
-        current_states = state_memory.get("current_states", {})
-        if isinstance(current_states, dict) and current_states:
-            memory_part = ", ".join([f"{k}={v}" for k, v in current_states.items()])
-            lines.append(f"State Memory: {memory_part}")
+    if isinstance(dynamic_state, dict) and dynamic_state.get("enabled"):
+        concepts = dynamic_state.get("concepts", {})
+        values = dynamic_state.get("values", {})
+        if isinstance(concepts, dict) and isinstance(values, dict) and concepts:
+            lines.append("Authoritative Dynamic State:")
+            for concept_id, concept in list(concepts.items())[:20]:
+                if not isinstance(concept, dict) or concept.get("status", "active") != "active":
+                    continue
+                value = values.get(concept_id, {})
+                current = value.get("value") if isinstance(value, dict) else None
+                lines.append(f"- {concept_id}: {current}")
     if isinstance(evidence, dict):
         items = evidence.get("items", [])
         if isinstance(items, list) and items:
@@ -523,31 +517,33 @@ def _detail_instruction(entity_type: str, simulation: Any) -> str:
         return ""
     instructions = {
         "individual": (
-            "Do not summarize the scene. Expand observable personal behavior: key spoken lines, pauses, gestures, "
-            "position changes, object interactions, emotional triggers, and private thoughts when useful."
+            "When useful, show the person's specific words, actions, or private experience rather than only a summary. "
+            "Select particulars that matter to this response; silence or a brief action can be sufficient."
         ),
         "group": (
-            "Do not write the group as one person. Expand collective detail through atmosphere, opinion distribution, "
-            "typical short quotes, subgroup reactions, rumors, silence, avoidance, pressure, and visible social signals."
+            "Do not write the group as one person. When relevant, show differences in opinion, representative remarks, "
+            "or observable collective responses without requiring a catalogue of every subgroup."
         ),
         "organization": (
-            "Expand institutional detail through decisions, procedures, assignments, resource changes, internal factions, "
-            "approval delays, enforcement actions, and strategic tradeoffs. Do not make it casual personal chatter."
+            "Show the relevant institutional decision, procedure, or resource consequence concretely when needed. "
+            "Do not invent internal activity just to make the response longer."
         ),
         "environment": (
-            "Expand environmental detail through time, place, sensory conditions, rules, risk, resource constraints, "
-            "visibility, accessibility, and how these change the cost or possibility of actions."
+            "Describe environmental particulars only where they affect perception, constraints, or available action. "
+            "Do not repeat scenery that has not meaningfully changed."
         ),
         "event": (
-            "Expand the event as a concrete interruption or state change: what happens, immediate sequence, affected entities, "
-            "intensity, duration, direct consequences, and likely aftershocks. Do not turn it into a long-term character."
+            "Show what the event actually changes and its relevant immediate consequences. "
+            "Do not invent extra stages or aftershocks to fill space, or turn the event into a person."
         ),
         "artifact": (
-            "Expand artifact detail through content, physical/digital state, owner, visibility, credibility, circulation, "
-            "how it is read or used, and what it changes in belief, trust, leverage, or available action."
+            "Show the artifact's relevant content, condition, or use when these affect the current interaction. "
+            "Do not repeat its full description or assign it a human inner life."
         ),
     }
-    return instructions.get(entity_type, "Expand concrete observable process instead of only summarizing the result.")
+    return instructions.get(entity_type, "Show the concrete contribution at the detail level needed; do not pad the response.") + (
+        " These are optional detail choices, not a checklist or minimum length. The current Scene Contract takes precedence."
+    )
 
 
 async def _execute_external_agent(node: WorkflowNode, node_input: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:

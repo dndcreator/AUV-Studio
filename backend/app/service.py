@@ -16,6 +16,7 @@ from .models import MemoryRecord, NodeRunRecord, RunEventRecord, RunRecord, Work
 from .observability import perf_tracker
 from .mode_contracts import MODE_CONTRACTS
 from .model_config_service import apply_stored_model_config, get_model_config, save_model_config, test_model_config
+from .narrative import narrative_prompts
 from .plan_compiler import compile_workflow_from_plan
 from .schemas import (
     DirectorCapability,
@@ -193,11 +194,13 @@ def list_memories(db: Session, workflow_id: str, limit: int = 100, run_id: str |
     out: list[MemoryItem] = []
     for row in rows:
         raw_meta = _safe_json_loads(row.tags_json, [])
-        tags = raw_meta if isinstance(raw_meta, list) else []
-        meta = raw_meta if isinstance(raw_meta, dict) else {}
-        kind = str(meta.get("kind", "fact")) if isinstance(meta, dict) else "fact"
-        if kind not in {"fact", "state", "character"}:
-            kind = "other"
+        if not isinstance(raw_meta, dict):
+            continue
+        meta = raw_meta
+        tags = meta.get("tags", []) if isinstance(meta.get("tags"), list) else []
+        kind = str(meta.get("kind", ""))
+        if kind not in {"fact", "character"}:
+            continue
         out.append(
             MemoryItem(
                 id=row.id,
@@ -206,13 +209,13 @@ def list_memories(db: Session, workflow_id: str, limit: int = 100, run_id: str |
                 node_id=row.node_id,
                 role=row.role,
                 content=row.content,
-                tags=tags if isinstance(tags, list) else [],
+                tags=tags,
                 kind=kind,  # type: ignore[arg-type]
-                scope=str(meta.get("scope", "node")) if isinstance(meta, dict) else "node",
-                subject=str(meta.get("subject", "")) if isinstance(meta, dict) else "",
-                importance=float(meta.get("importance", 0.5)) if isinstance(meta, dict) else 0.5,
-                confidence=float(meta.get("confidence", 0.7)) if isinstance(meta, dict) else 0.7,
-                source_event_seq=int(meta["source_event_seq"]) if isinstance(meta, dict) and meta.get("source_event_seq") is not None else None,
+                scope=str(meta.get("scope", "node")),
+                subject=str(meta.get("subject", "")),
+                importance=float(meta.get("importance", 0.5)),
+                confidence=float(meta.get("confidence", 0.7)),
+                source_event_seq=int(meta["source_event_seq"]) if meta.get("source_event_seq") is not None else None,
                 created_at=row.created_at,
             )
         )
@@ -303,7 +306,20 @@ def apply_director_command(db: Session, run_id: str, req: DirectorCommandRequest
         node_id="director_console",
         role="director_override",
         content=guidance[:4000],
-        tags_json=json.dumps(["director_override", capability], ensure_ascii=False),
+        tags_json=json.dumps(
+            {
+                "version": 1,
+                "kind": "fact",
+                "scope": "global",
+                "subject": "director",
+                "importance": 0.9,
+                "confidence": 1.0,
+                "source_event_seq": None,
+                "trigger": capability,
+                "tags": ["director_override", capability],
+            },
+            ensure_ascii=False,
+        ),
     )
     db.add(mem)
     db.commit()
@@ -572,7 +588,7 @@ def get_run_checkpoints(db: Session, run_id: str, limit: int = 80) -> RunCheckpo
         db.query(RunEventRecord)
         .filter(
             RunEventRecord.run_id == run_id,
-            RunEventRecord.event.in_(["succeeded", "waiting_human", "failed", "dynamic_state_updated"]),
+            RunEventRecord.event.in_(["succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited"]),
         )
         .order_by(RunEventRecord.seq.desc())
         .limit(max(1, min(limit, 300)))
@@ -584,6 +600,8 @@ def get_run_checkpoints(db: Session, run_id: str, limit: int = 80) -> RunCheckpo
         trace = payload.get("_trace", {}) if isinstance(payload, dict) else {}
         context_snapshot = trace.get("context_snapshot", {}) if isinstance(trace, dict) else {}
         output = payload.get("output", {}) if isinstance(payload, dict) else {}
+        if row.event == "episode_audited" and isinstance(payload, dict):
+            output = {"text": payload.get("reason", "")}
         error = payload.get("error") if isinstance(payload, dict) else None
         summary = _checkpoint_summary(output=output, error=error, context_snapshot=context_snapshot)
         checkpoints.append(
@@ -607,7 +625,7 @@ def build_rollback_request(db: Session, run_id: str, request: RollbackRequest) -
     row = db.query(RunEventRecord).filter(RunEventRecord.run_id == run_id, RunEventRecord.seq == request.event_seq).first()
     if row is None:
         raise HTTPException(status_code=404, detail="checkpoint event not found")
-    if row.event not in {"succeeded", "waiting_human", "failed", "dynamic_state_updated"}:
+    if row.event not in {"succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited"}:
         raise HTTPException(status_code=400, detail="event is not rollback-capable")
     payload = _safe_json_loads(row.payload_json, {})
     trace = payload.get("_trace", {}) if isinstance(payload, dict) else {}
@@ -785,6 +803,12 @@ async def generate_run_report(
     workflow_record = db.query(WorkflowRecord).filter(WorkflowRecord.id == run_detail.workflow_id).first()
     workflow = WorkflowDefinition.model_validate(json.loads(workflow_record.definition_json)) if workflow_record is not None else None
     readable_source = _build_readable_report_source(run_detail=run_detail, workflow=workflow)
+    if len(readable_source) > settings.report_source_max_chars:
+        raise HTTPException(status_code=413, detail=(
+            f"Report source has {len(readable_source)} characters, exceeding AUV_REPORT_SOURCE_MAX_CHARS="
+            f"{settings.report_source_max_chars}. No model request was sent. Export the full log or increase "
+            "the limit only if your model context and cost budget support it."
+        ))
 
     style = (request.style_prompt or "").strip()
     audience = (request.audience or "").strip() or "general"
@@ -793,7 +817,7 @@ async def generate_run_report(
     length_hint = {"short": "400-700 words", "medium": "800-1300 words", "long": "1400-2200 words"}[request.length]
 
     evidence_lines = _build_report_evidence_lines(run_detail=run_detail, metrics=metrics)
-    evidence_block = "\n".join(evidence_lines[:120])
+    evidence_block = "\n".join(evidence_lines[:5])
     output_language = "Chinese" if re.search(r"[\u4e00-\u9fff]", readable_source) else "the same language as the simulation source"
     simulation_mode = str(workflow.environment.simulation.get("ui_mode", "custom")) if workflow else "custom"
 
@@ -809,7 +833,7 @@ async def generate_run_report(
             Audience: {audience}
             Simulation mode: {simulation_mode}
             Output language: {output_language}
-            Target length: {length_hint}
+            Length budget: approximately {length_hint}; stay shorter when the source supports less. Never pad or repeat to reach a minimum.
             Optional style requirement: {style or "none"}
 
             Required sections:
@@ -824,38 +848,14 @@ async def generate_run_report(
             {evidence_block}
 
             Readable Simulation Material:
-            {readable_source[:16000]}
+            {readable_source}
             """
         ).strip()
     else:
-        writer_system = (
-            "You are a narrative writer adapting readable simulation material into a literary work or script. "
-            "Preserve core causality, actors, decisions, and outcomes. Never mention nodes, prompts, tokens, traces, "
-            "the report-generation process, or internal Director instructions. "
-            "You may dramatize prose, dialogue, pacing, and scene transitions when the user asks for it."
+        writer_system, writer_user = narrative_prompts(
+            source=readable_source, style=style, language=output_language,
+            audience=audience, length=request.length,
         )
-        writer_user = dedent(
-            f"""
-            Rewrite the simulation process as a polished narrative work in Markdown.
-            Audience: {audience}
-            Output language: {output_language}
-            Target length: {length_hint}
-            User style/form requirement: {style or "cinematic narrative with concrete scenes and dialogue"}
-
-            Choose the most suitable structure for the requested form:
-            - Novel/prose: chapters or scenes with vivid but grounded narration.
-            - Screenplay/script: scene headings, action lines, and dialogue.
-            - Game/mission script: beats, radio lines, objectives, and transitions.
-
-            Keep core facts grounded in evidence while making the work readable and dramatic.
-
-            Evidence:
-            {evidence_block}
-
-            Readable Simulation Material:
-            {readable_source[:16000]}
-            """
-        ).strip()
 
     llm = await provider.chat(model="", system_prompt=writer_system, user_prompt=writer_user)
     markdown = str(llm.get("content", "")).strip()
@@ -967,7 +967,7 @@ def _build_readable_report_source(run_detail: RunDetail, workflow: WorkflowDefin
         if node_type in {"director", "report"} or node_run.node_id.startswith(("director_", "report_")):
             continue
         config = node.config if node else {}
-        label = str(config.get("entity_name") or config.get("profile") or config.get("role") or node_run.node_id)
+        label = str(config.get("entity_name") or config.get("role") or node_run.node_id)
         if node_run.node_id.startswith("summary_"):
             final_outputs.append(text)
         else:
@@ -979,9 +979,9 @@ def _build_readable_report_source(run_detail: RunDetail, workflow: WorkflowDefin
         evidence_items = evidence.get("items", []) if isinstance(evidence, dict) else []
         if isinstance(evidence_items, list) and evidence_items:
             observed = []
-            for item in evidence_items[:20]:
+            for item in evidence_items:
                 if isinstance(item, dict):
-                    observed.append(f"[{str(item.get('name', 'source'))}]\n{str(item.get('content', ''))[:2000]}")
+                    observed.append(f"[{str(item.get('name', 'source'))}]\n{str(item.get('content', ''))}")
             if observed:
                 parts.extend(["## Observed evidence supplied by the user", "\n\n".join(observed)])
     parts.extend(["## Simulated interactions", "\n\n".join(interactions) or "No readable interactions were recorded."])

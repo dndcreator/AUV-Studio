@@ -1,8 +1,10 @@
 ﻿# API 参考
 
-最后更新：2026-09-30
+最后更新：2026-10-22
 
 基地址：`http://localhost:8000/api`
+
+浏览器请求的 `Origin` 必须匹配 `AUV_ALLOWED_ORIGINS`。默认允许 localhost、127.0.0.1、[::1] 的 HTTP 5173/4173/8000 端口，不允许通配符；未授权来源返回 403。未携带 Origin 的本地客户端和外接 Agent 不受此限制。这不是身份认证，不应直接将服务暴露到公网。
 
 ## 研究证据包
 
@@ -11,6 +13,8 @@
 在本地解析用户提供的单个文件或 ZIP 证据包。请求体为原始二进制，`Content-Type: application/octet-stream`，文件名通过 `X-Filename` 请求头传递。
 
 当前支持 `.zip/.xlsx/.docx/.csv/.json/.txt/.md`。ZIP 内文件使用同一白名单；`.pdf/.xls/.doc` 等格式会出现在 `skipped` 中，不会静默忽略。接口限制上传 25 MB、最多 100 个归档文件、解压后最多 80 MB，并拒绝路径穿越条目。
+
+请求按流累计大小，声明或实际上传超过 25 MB 返回 413，包含无 Content-Length 的分块上传。无效 Content-Length 返回 400。Office 文档内部也限制 100 个归档条目和 80 MB 展开大小；单个文档失败记录在 `errors` 中。本地解析在线程池完成，不占用异步请求循环。
 
 响应包含：
 
@@ -26,12 +30,13 @@
 - `POST /workflows` 创建工作流
 - `GET /workflows` 工作流列表
 - `GET /workflows/{id}` 获取工作流
-- `PUT /workflows/{id}` 更新工作流
+- `PUT /workflows/{id}` 保存工作流：存在则更新，不存在则创建（upsert）
 
 ## 2. 执行与重试
 
 - `POST /workflows/{id}/run` 启动运行
 - `POST /runs/{run_id}/retry` 从失败节点重试
+  - 保留原运行的用户输入；不重放旧 `_human_response` 或 `_rollback` 控制字段。连续模拟的精确状态续接使用检查点 rollback，而非把 retry 当成自动断点恢复。
 - `POST /runs/{run_id}/rollback` 从指定事件检查点创建新运行
 - `POST /runs/{run_id}/human-response` 提交人工回复并恢复
 - `POST /runs/{run_id}/director-command` 向导演发送自然语言指令
@@ -43,6 +48,7 @@
 ## 3. 运行查询
 
 - `GET /runs/{run_id}` 运行详情
+- `GET /runs/{run_id}/status` 轻量状态：仅返回 `{"run_id":"run_xxx","status":"running"}`，不存在返回 404；不加载输入、输出和节点明细
 - `GET /runs/{run_id}/events?after_seq=0&limit=500` 事件流
 - `GET /runs/{run_id}/checkpoints?limit=80` 可回滚检查点
 - `GET /runs/{run_id}/trace/{seq}` 单事件追溯（父事件、触发来源、上下文快照）
@@ -50,9 +56,13 @@
 - `GET /runs/{run_id}/metrics` 运行指标
 - `GET /compare-runs?run_a=...&run_b=...` 对比
 - `POST /runs/{run_id}/report` 报告生成
+  - 发送完整可读素材（含结尾和用户上传证据），不再只取前 16,000 字符。
+  - 素材超过 `AUV_REPORT_SOURCE_MAX_CHARS`（默认 64,000 字符）时返回 413，在调用写作模型之前中止。可导出 Full Log，或确认模型上下文和成本后调整环境变量并重启；不会自动增加分段摘要调用。
 - `POST /runs/{run_id}/media` 将报告、剧本或本次运行的可读输出转为图片或视频任务
 - `GET /media/generations/{generation_id}` 查询并刷新异步媒体任务
 - `GET /media/generations/{generation_id}/assets/{asset_id}/content` 读取本地生成资产或代理视频内容
+
+后端重启会把上次未完成的 `pending/queued/running/stopping` 运行标为 failed，错误码为 `RUNTIME_INTERRUPTED`，并追加可追溯事件；不会自动重新入队。已完成输出和检查点保留，`waiting_human` 仍可通过人工回复接口继续。
 
 ## 4. 平台能力
 
@@ -84,8 +94,8 @@
   - Director 会拆解 `assumptions/hypotheses/success_metrics/decision_criteria`
   - `simulation_blueprint` 包含 `research_design/simulation_design/output_plan/quality_controls`
   - 自动生成的 agent 节点会注入 `entity_type/responsibilities` 和关键拆解字段
-- `GET /workflows/{workflow_id}/memories` 读取三层轻量记忆
-  - 记忆字段包含 `kind=fact|state|character|other`
+- `GET /workflows/{workflow_id}/memories` 读取事实与角色历史记忆
+  - 记忆字段仅包含 `kind=fact|character`；其他类型不会进入 API 响应或运行召回
   - 返回 `scope/subject/importance/confidence/source_event_seq`
 - `DELETE /workflows/{workflow_id}/memories` 清空轻量记忆
 - `GET /observability` 性能快照
@@ -103,7 +113,7 @@
 - `POST /runs/{run_id}/rollback`
   - 请求：`{"event_seq": 12, "reason": "方向偏了，从这里重开"}`
   - 响应：`{"run_id": "run_xxx", "status": "queued", "source_run_id": "...", "event_seq": 12, "retry_from_node": "..."}`
-  - 语义：创建一个新的 run，不修改原 run；DAG 复用检查点之前的上游输出，连续模拟从内部快照精确恢复当时的 Dynamic State 与既有行动。
+  - 语义：创建一个新的 run，不修改原 run；DAG 复用检查点之前的上游输出，连续模拟从内部快照精确恢复当时的 Dynamic State、既有行动和 `scene_control`。`episode_audited` 边界也可作为回滚检查点。
   - 回滚输入会写入新 run 的 `input._rollback`，方便后续追溯。
 
 ## 5. 外接 Agent 接入模式
@@ -129,6 +139,9 @@
 
 - Run 状态：`pending | running | waiting_human | stopping | stopped | succeeded | failed`
 - Event 类型：`queued | running | waiting_human | human_resumed | director_overridden | director_corrected | director_vote_started | director_vote_cast | director_vote_finished | nodes_activated | episode_audited | context_pack_activated | dynamic_state_updated | dynamic_state_failed | stop_requested | stopped | succeeded | failed | skipped`
+  - `nodes_activated.scene_contract`：首次路由建立的当前场景契约，后续路由沿用。
+  - `episode_audited.progress_assessment`：按完整互动轮次记录 `round_progress`、连续 `stagnation`、`needs_attention` 和 `unassessed_rounds`；缺失判断不视作已通过。
+  - `episode_audited.scene_control`：契约、停滞计数和审计游标；同事件包含独立的内部 `_rollback_snapshot`。这些控制信息不属于领域事实。角色 `succeeded.payload.output.turn_delta` 可为空，不直接写入 Dynamic State。
   - `nodes_activated`：AI 语义路由为当前阶段选择了相关自治节点。
   - `episode_audited`：Director 在节点完成提案后审计继续、转段或结束，不代替节点作出内容决策。
   - `context_pack_activated`：记录运行开始或转段时激活的背景条目、原因和估算 Token。
@@ -151,7 +164,9 @@
 - `simulation_state.world_state` 会随运行事件写入：
   - `current_time/current_location`
   - `temporal_scope/spatial_scope`
-  - `conditions`
-  - `active_events`
+- `simulation_state.runtime_metrics` 只包含机械执行指标：
+  - `progress`
+- `simulation_state.dynamic_state` 是当前领域事实的唯一权威来源。
+- Full Log、Live、Trace 和 Replay 从 `run_events` 构建，不在 simulation state 内复制事件列表。
 - 安全说明：
   - 事件与节点运行输入输出会对常见敏感字段自动脱敏（`api_key/token/authorization/password/secret`）

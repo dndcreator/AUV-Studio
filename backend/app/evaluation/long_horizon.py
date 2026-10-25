@@ -64,8 +64,7 @@ def build_long_horizon_checkpoints(scenario: dict[str, Any]) -> list[dict[str, A
             continue
         state = {
             "episode_index": turn,
-            "shared_context": event,
-            "world_state": {"turn": turn, "active_node_ids": active_nodes},
+            "world_state": {},
             "phases": [{"id": "long_horizon", "name": "Long horizon", "objective": "Preserve durable dependencies."}],
             "current_phase_index": 0,
         }

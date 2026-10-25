@@ -21,7 +21,9 @@ LOCAL_PROVIDER_DEFAULTS: dict[str, tuple[str, str]] = {
 
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class OpenAICompatibleProvider:
@@ -99,7 +101,8 @@ class OpenAICompatibleProvider:
                 except httpx.HTTPStatusError as exc:
                     detail = _response_error_detail(resp)
                     raise ProviderError(
-                        f"Provider request failed: HTTP {resp.status_code} for {url}; model={effective_model}; detail={detail}"
+                        f"Provider request failed: HTTP {resp.status_code} for {url}; model={effective_model}; detail={detail}",
+                        retryable=resp.status_code in {408, 429} or resp.status_code >= 500,
                     ) from exc
                 data = resp.json()
                 if protocol_kind == "ollama":
@@ -119,11 +122,16 @@ class OpenAICompatibleProvider:
                 return {"content": content, "raw": data}
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
+                if isinstance(exc, ProviderError) and not exc.retryable:
+                    break
                 if attempt < self.retry_count:
                     await asyncio.sleep(2**attempt)
                 else:
                     break
-        raise ProviderError(f"Provider request failed: {last_error}") from last_error
+        raise ProviderError(
+            f"Provider request failed: {last_error}",
+            retryable=not isinstance(last_error, ProviderError) or last_error.retryable,
+        ) from last_error
 
 
 def _response_error_detail(resp: httpx.Response) -> str:

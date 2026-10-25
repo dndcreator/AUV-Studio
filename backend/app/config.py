@@ -22,6 +22,15 @@ class Settings:
     perf_node_slow_ms: int = int(os.getenv("AUV_PERF_NODE_SLOW_MS", "10000"))
     run_worker_count: int = int(os.getenv("AUV_RUN_WORKER_COUNT", "4"))
     run_queue_max_size: int = int(os.getenv("AUV_RUN_QUEUE_MAX_SIZE", "200"))
+    report_source_max_chars: int = max(1, int(os.getenv("AUV_REPORT_SOURCE_MAX_CHARS", "64000")))
+    allowed_origins: tuple[str, ...] = tuple(
+        origin.strip().rstrip("/") for origin in os.getenv(
+            "AUV_ALLOWED_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173,http://[::1]:5173,"
+            "http://localhost:4173,http://127.0.0.1:4173,http://[::1]:4173,"
+            "http://localhost:8000,http://127.0.0.1:8000,http://[::1]:8000",
+        ).split(",") if origin.strip() and origin.strip() != "*"
+    )
 
 
 settings = Settings()

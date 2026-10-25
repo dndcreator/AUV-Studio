@@ -66,9 +66,8 @@ export function formatDynamicStateValue(value: unknown): string {
 export function buildSimulationView(events: RunEvent[]): {
   stepSeq: number | null;
   phaseName: string;
-  variables: { progress: number; confidence: number; risk: number; alignment: number };
+  runtimeMetrics: { progress: number };
   worldState: { current_time: string; current_location: string; temporal_scope: string; spatial_scope: string };
-  stateMemory: { task_state: string; collaboration_state: string; relationship_state: string };
   dynamicState: {
     enabled: boolean;
     version: number;
@@ -80,9 +79,8 @@ export function buildSimulationView(events: RunEvent[]): {
   const fallback = {
     stepSeq: null,
     phaseName: "",
-    variables: { progress: 0, confidence: 0, risk: 0, alignment: 0 },
+    runtimeMetrics: { progress: 0 },
     worldState: { current_time: "", current_location: "", temporal_scope: "", spatial_scope: "" },
-    stateMemory: { task_state: "planning", collaboration_state: "aligned", relationship_state: "neutral" },
     dynamicState: {
       enabled: false,
       version: 1,
@@ -93,9 +91,8 @@ export function buildSimulationView(events: RunEvent[]): {
   };
   const sorted = [...events].sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0));
   const timeline: Array<{ seq: number; nodeId: string; status: string; phaseName: string }> = [];
-  let lastVars = { progress: 0, confidence: 0, risk: 0, alignment: 0 };
+  let lastRuntimeMetrics = { progress: 0 };
   let lastWorldState = { current_time: "", current_location: "", temporal_scope: "", spatial_scope: "" };
-  let lastStateMemory = { task_state: "planning", collaboration_state: "aligned", relationship_state: "neutral" };
   let lastDynamicState = fallback.dynamicState;
   let phaseName = "";
   let stepSeq: number | null = null;
@@ -123,13 +120,10 @@ export function buildSimulationView(events: RunEvent[]): {
     if (!sim || typeof sim !== "object") {
       continue;
     }
-    const vars = sim.variables as Record<string, unknown> | undefined;
-    if (vars && typeof vars === "object") {
-      lastVars = {
-        progress: Number(vars.progress ?? lastVars.progress) || 0,
-        confidence: Number(vars.confidence ?? lastVars.confidence) || 0,
-        risk: Number(vars.risk ?? lastVars.risk) || 0,
-        alignment: Number(vars.alignment ?? lastVars.alignment) || 0
+    const runtimeMetrics = sim.runtime_metrics as Record<string, unknown> | undefined;
+    if (runtimeMetrics && typeof runtimeMetrics === "object") {
+      lastRuntimeMetrics = {
+        progress: Number(runtimeMetrics.progress ?? lastRuntimeMetrics.progress) || 0
       };
     }
     const worldState = sim.world_state as Record<string, unknown> | undefined;
@@ -139,15 +133,6 @@ export function buildSimulationView(events: RunEvent[]): {
         current_location: String(worldState.current_location ?? lastWorldState.current_location),
         temporal_scope: String(worldState.temporal_scope ?? lastWorldState.temporal_scope),
         spatial_scope: String(worldState.spatial_scope ?? lastWorldState.spatial_scope)
-      };
-    }
-    const stateMemory = sim.state_memory as Record<string, unknown> | undefined;
-    const currentStates = stateMemory?.current_states as Record<string, unknown> | undefined;
-    if (currentStates && typeof currentStates === "object") {
-      lastStateMemory = {
-        task_state: String(currentStates.task_state ?? lastStateMemory.task_state),
-        collaboration_state: String(currentStates.collaboration_state ?? lastStateMemory.collaboration_state),
-        relationship_state: String(currentStates.relationship_state ?? lastStateMemory.relationship_state)
       };
     }
     const phaseIndex = Number(sim.current_phase_index ?? -1);
@@ -169,9 +154,8 @@ export function buildSimulationView(events: RunEvent[]): {
   return {
     stepSeq,
     phaseName,
-    variables: lastVars,
+    runtimeMetrics: lastRuntimeMetrics,
     worldState: lastWorldState,
-    stateMemory: lastStateMemory,
     dynamicState: lastDynamicState,
     timeline
   };

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 
 describe("api client", () => {
   afterEach(() => {
@@ -38,6 +38,24 @@ describe("api client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.getQueueStatus()).rejects.toThrow("boom");
+  });
+
+  it("keeps HTTP status while presenting readable FastAPI validation errors", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 422,
+      text: async () => JSON.stringify({ detail: [{ msg: "Field required" }, { msg: "Invalid URL" }] }) }));
+    const error = await api.getQueueStatus().catch((value) => value);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.status).toBe(422);
+    expect(error.message).toBe("Field required; Invalid URL");
+  });
+
+  it("polls lightweight status and forwards cancellation without downloading node history", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ run_id: "run_1", status: "running" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    await api.getRunStatus("run_1", controller.signal);
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/runs/run_1/status");
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
   });
 
   it("calls run endpoint with default input payload", async () => {

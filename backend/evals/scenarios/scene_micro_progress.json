@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "title": "Scene Contract: slow dialogue with meaningful micro progress",
+  "estimated_calls": 13,
+  "input": {"task": "用中文模拟雨停前两名成年旧友归还一本书的短对话。慢节奏、高细节、微小推进；不凑字数，不强行升级冲突。"},
+  "expected": {
+    "actor_node_ids": ["lin", "zhou"], "min_actions": 2, "min_active_actors": 2,
+    "min_unique_action_ratio": 0.75, "require_director_completion": true, "require_scene_control": true
+  },
+  "rubric": {
+    "selective_detail": "对话有可读的具体内容，但不每轮堆叠天气、目光、动作和心理，不重复已经说过的事实。",
+    "micro_progress": "迟疑、一次试探、接过书或回应一个问题就可以构成与目标相关的微小变化；不得为了推进制造反转、事故或突然告白。",
+    "delta_grounding": "Turn Delta必须能在该轮实际行动或对白中找到依据；没有改变时可以为空。",
+    "autonomy": "角色只控制自己，导演不预写双方具体动作或台词。",
+    "closure": "在归还得到回应后可以自然结束；行动上限不是配额。不要因为两三轮篇幅短就扣分。"
+  },
+  "workflow": {
+    "id": "eval_scene_micro_progress", "name": "雨棚下还书", "version": 1,
+    "nodes": [
+      {"id": "director", "type": "director", "position": {"x": 0, "y": 0}, "config": {"objective": "守住慢节奏、高细节、微小推进，不替角色行动。", "gpro_candidates": 1}, "inputs": {}},
+      {"id": "lin", "type": "agent", "position": {"x": 240, "y": 0}, "config": {
+        "entity_type": "individual", "entity_name": "林夏", "role": "旧友",
+        "entity_profile": "27岁。借走周远的一本书一年，今天带来归还。她曾在书里夹一张写了一半、没有署名的道歉便签，自己没想好要不要解释；不知道周远是否看到。她想自然地重新说上话，又不愿被逼着立即澄清所有旧事。",
+        "behavior_prompt": "用中文作为林夏自主回应。只描述自己的话语与行动；不知道的事不能替对方认定。不需要每轮加心理描写或新的冲突。"
+      }, "inputs": {"prompt": "按当前处境决定如何回应。"}},
+      {"id": "zhou", "type": "agent", "position": {"x": 240, "y": 180}, "config": {
+        "entity_type": "individual", "entity_name": "周远", "role": "旧友",
+        "entity_profile": "28岁。答应在书店门口拿回借给林夏的书。还没有拿到书，因此不知道书里是否夹了东西。他记得两人过去常聊阅读，今天不急着离开，也不想把普通见面变成审问。",
+        "behavior_prompt": "用中文作为周远自主回应。只使用自己观察到或得知的信息。不代替林夏回应，不凭空读取书页或他人的内心。"
+      }, "inputs": {"prompt": "按当前处境决定如何回应。"}},
+      {"id": "summary_final", "type": "agent", "position": {"x": 520, "y": 0}, "config": {"role": "recorder", "system_prompt": "用中文简述真实发生的交换及未解决之处，不续写新的情节。"}, "inputs": {"prompt": "简要记录本次实际结果。"}}
+    ],
+    "edges": [], "entry_nodes": ["director"],
+    "environment": {
+      "scenario": "傍晚，小雨。两名成年旧友在仍营业的书店雨棚下碰面还书。没有其他事件要求他们立即行动。",
+      "time_context": "傍晚六点", "spatial_context": "书店门口雨棚下",
+      "facts": ["两人都是成年人。", "书仍在林夏手里，尚未交给周远。", "没有人被要求在此刻和好、告白或争吵。"],
+      "simulation": {
+        "mode": "roleplay", "execution_model": "continuous", "detail_granularity": "detailed",
+        "horizon_rounds": 3, "director_interval_rounds": 1,
+        "output_contract": {"format": "scene", "max_items": 6, "unit": "action"},
+        "dynamic_state": {"enabled": true, "max_new_per_round": 1},
+        "task_contract": {
+          "objective": "让归还书籍和双方对这次见面的态度通过自主互动得到发展。",
+          "deliverable": "中文实际对白与相关动作。Scene Contract采用slow pacing、high detail和micro progress；具体细节按需要展开，没有最低字数。",
+          "completion_condition": "书的归还得到具体回应，或双方自然确认此刻不必继续。未解释的旧事可以留白，不必强行解决。"
+        }
+      }
+    }
+  }
+}

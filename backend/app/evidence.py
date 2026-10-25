@@ -122,8 +122,17 @@ def _parse_csv(data: bytes) -> str:
     return "\n".join(" | ".join(cell.strip() for cell in row[:50]) for row in rows[:2000])
 
 
+def _validate_document_archive(archive: zipfile.ZipFile) -> None:
+    files = archive.infolist()
+    if len(files) > MAX_ARCHIVE_FILES:
+        raise ValueError("Office document contains too many archive entries")
+    if sum(entry.file_size for entry in files) > MAX_EXPANDED_BYTES:
+        raise ValueError("expanded Office document exceeds size limit")
+
+
 def _parse_docx(data: bytes) -> str:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        _validate_document_archive(archive)
         xml = archive.read("word/document.xml")
     root = ET.fromstring(xml)
     paragraphs: list[str] = []
@@ -137,6 +146,7 @@ def _parse_docx(data: bytes) -> str:
 
 def _parse_xlsx(data: bytes) -> str:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        _validate_document_archive(archive)
         names = set(archive.namelist())
         shared: list[str] = []
         if "xl/sharedStrings.xml" in names:

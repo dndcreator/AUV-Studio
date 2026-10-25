@@ -57,6 +57,56 @@ def _workflow_payload(workflow_id: str, name: str) -> dict:
     }
 
 
+def test_browser_origin_guard_allows_local_ui_and_blocks_foreign_sites() -> None:
+    client = TestClient(app)
+    try:
+        allowed = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
+        assert allowed.status_code == 200
+        assert allowed.headers["access-control-allow-origin"] == "http://localhost:5173"
+        assert "access-control-allow-credentials" not in allowed.headers
+        for origin in ("https://evil.example", "null", "http://localhost.evil.example:5173"):
+            response = client.post("/api/workflows", headers={"Origin": origin}, json={})
+            assert response.status_code == 403
+            assert "access-control-allow-origin" not in response.headers
+        assert client.get("/api/health").status_code == 200
+    finally:
+        client.close()
+
+
+def test_run_status_api_is_lightweight_and_missing_run_is_404() -> None:
+    gen = _client_with_db()
+    client = next(gen)
+    try:
+        assert client.get("/api/runs/missing/status").status_code == 404
+        client.put("/api/workflows/status_test", json=_workflow_payload("status_test", "status"))
+        sessions = app.dependency_overrides[get_db]()
+        db = next(sessions)
+        try:
+            db.add(RunRecord(id="status_run", workflow_id="status_test", status="running", output_json='{"huge":"not returned"}'))
+            db.commit()
+        finally:
+            sessions.close()
+        response = client.get("/api/runs/status_run/status")
+        assert response.status_code == 200
+        assert response.json() == {"run_id": "status_run", "status": "running"}
+    finally:
+        gen.close()
+
+
+def test_evidence_upload_limit_applies_to_declared_and_streamed_sizes(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.MAX_UPLOAD_BYTES", 4)
+    client = TestClient(app)
+    try:
+        headers = {"content-type": "application/octet-stream", "x-filename": "tiny.txt"}
+        assert client.post("/api/evidence/parse", content=b"12345", headers=headers).status_code == 413
+        assert client.post("/api/evidence/parse", content=iter([b"123", b"45"]), headers=headers).status_code == 413
+        response = client.post("/api/evidence/parse", content=b"text", headers=headers)
+        assert response.status_code == 200
+        assert response.json()["summary"]["parsed_files"] == 1
+    finally:
+        client.close()
+
+
 def test_workflow_crud_list_update_get() -> None:
     gen = _client_with_db()
     client = next(gen)
@@ -368,7 +418,7 @@ def test_memories_list_and_clear() -> None:
                     node_id="a1",
                     role="planner",
                     content="remember this",
-                    tags_json='["agent"]',
+                    tags_json='{"kind":"fact","scope":"node","subject":"planner","importance":0.8,"confidence":0.9,"source_event_seq":1,"tags":["agent"]}',
                 )
             )
             db.commit()

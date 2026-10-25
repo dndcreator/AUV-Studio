@@ -7,6 +7,7 @@ from typing import Any
 from ..schemas import WorkflowDefinition, WorkflowNode
 from .dynamic_state import compact_dynamic_state
 from .entity_contracts import entity_action_contract
+from .scene_control import scene_setup_instruction
 
 
 @dataclass(frozen=True)
@@ -15,12 +16,10 @@ class SimulationLoopPolicy:
     max_actions: int
     max_rounds: int
     director_interval_rounds: int
-    min_actions_before_stop: int
 
 
 def build_loop_policy(workflow: WorkflowDefinition) -> SimulationLoopPolicy:
     simulation = workflow.environment.simulation if isinstance(workflow.environment.simulation, dict) else {}
-    mode = str(simulation.get("mode", "")).strip().lower()
     execution_model = str(simulation.get("execution_model", "")).strip().lower()
     contract = simulation.get("output_contract", {})
     if not isinstance(contract, dict):
@@ -34,13 +33,12 @@ def build_loop_policy(workflow: WorkflowDefinition) -> SimulationLoopPolicy:
     action_units = {"utterance", "action", "turn", "line"}
     requested_actions = int(contract.get("max_items", 0) or 0) if unit in action_units else 0
     max_actions = requested_actions if requested_actions > 0 else max_rounds * actor_count
-    max_actions = max(actor_count, min(max_actions, 120))
+    max_actions = max(1, min(max_actions, 120))
     return SimulationLoopPolicy(
         enabled=execution_model == "continuous",
         max_actions=max_actions,
         max_rounds=max_rounds,
         director_interval_rounds=max(1, min(int(simulation.get("director_interval_rounds", 1) or 1), 8)),
-        min_actions_before_stop=min(max_actions, max(actor_count, int(contract.get("min_items", 0) or 0))),
     )
 
 
@@ -71,7 +69,7 @@ def build_role_packet(node: WorkflowNode, memories: list[dict[str, Any]]) -> dic
         "identity_contract": identity_contract,
         "behavior_rule": str(node.config.get("behavior_prompt") or ""),
         "entity_action_contract": entity_action_contract(entity_type),
-        "current_character_state": character_memory[-1] if character_memory else {},
+        "character_history": character_memory[-3:],
     }
 
 
@@ -97,7 +95,6 @@ def build_shared_state_view(state: dict[str, Any], recent_actions: list[dict[str
         "mode": state.get("mode", ""),
         "task_contract": state.get("task_contract", {}),
         "current_phase": current_phase,
-        "shared_context": str(state.get("shared_context", ""))[-2400:],
         "world_state": state.get("world_state", {}),
         "dynamic_state": compact_dynamic_state(state.get("dynamic_state", {})),
         "recent_actions": recent_actions[-8:],
@@ -109,14 +106,18 @@ def activation_instruction(
     state: dict[str, Any],
     recent_actions: list[dict[str, Any]],
     nodes: list[WorkflowNode],
+    scene_control: dict[str, Any] | None = None,
 ) -> str:
+    scene = scene_control or {}
     return (
         "Select only the nodes that are meaningfully involved in the next step of this distributed process. "
         "Use semantic judgment from the shared state and node definitions. Do not activate every node for fairness, "
         "and do not invent what any node will decide. This applies equally to simulation, research, collaboration, "
         "and roleplay. Return JSON only: "
         '{"active_node_ids":["node_id"],"reason":"brief routing reason"}.\n\n'
-        f"SHARED STATE:\n{json.dumps(build_shared_state_view(state, recent_actions), ensure_ascii=False, default=str)}\n\n"
+        + (scene_setup_instruction() if not scene.get("contract") else "Preserve the established Scene Contract. ")
+        + f"\nSCENE CONTRACT:\n{json.dumps(scene.get('contract', {}), ensure_ascii=False)}\n\n"
+        + f"SHARED STATE:\n{json.dumps(build_shared_state_view(state, recent_actions), ensure_ascii=False, default=str)}\n\n"
         f"AVAILABLE NODES:\n{json.dumps(build_node_descriptors(nodes), ensure_ascii=False, default=str)}"
     )
 
@@ -135,7 +136,7 @@ def parse_activation(content: str, nodes: list[WorkflowNode], fallback_index: in
     active_ids = list(dict.fromkeys(active_ids))[: max(1, min(4, len(nodes)))]
     if not active_ids and nodes:
         active_ids = [nodes[fallback_index % len(nodes)].id]
-    return {"active_node_ids": active_ids, "reason": str(value.get("reason", "")).strip()}
+    return {"active_node_ids": active_ids, "reason": str(value.get("reason", "")).strip(), "scene_contract": value.get("scene_contract")}
 
 
 def build_context_packet(
@@ -147,10 +148,12 @@ def build_context_packet(
     background_context: dict[str, Any] | None,
     round_index: int,
     action_index: int,
+    scene_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "round": round_index,
         "action_index": action_index,
+        "scene_contract": scene_contract or {},
         "state": state,
         "memory": memories,
         "recent_actions": recent_actions[-12:],
@@ -166,13 +169,19 @@ def action_instruction(context_packet: dict[str, Any], role_packet: dict[str, An
         "First decide whether your identity, knowledge, goals, and current situation justify participation. Control only "
         "yourself: never write another participant's action, reaction, thoughts, conclusion, or decision, and never turn an "
         "unobserved assumption into a global fact. Follow the shared task contract for language, format, style, and level of "
-        "detail. When you act, make the action concrete and as rich as the requested deliverable needs: dialogue may include "
+        "detail. Follow the current Scene Contract for pacing, detail, and progress_scale independently. "
+        "Detail means selectively showing meaningful particulars, not a word quota or checklist: dialogue may include "
         "your exact words and behavior; analytical work may include your reasoning, evidence, uncertainty, and result. "
+        "Use only the detail needed for this contribution. Do not repeat established information or add atmosphere, "
+        "gestures, explanations, or fabricated developments to fill space. Small relevant changes are enough at micro "
+        "scale; waiting or silence can be appropriate. Report turn_delta as the grounded change since the preceding "
+        "interaction; it may be empty. Never invent novelty to satisfy this field. "
         "Meaningful initiative should originate from participants rather than the director. Follow the entity action contract "
         "in ROLE before any optional custom behavior rule. Produce an in-world action or response, never a paraphrase of this "
         "instruction or the requested task. Keep one turn focused on one "
         "concrete contribution, and prioritize syntactically complete JSON over extra length. Return JSON only with: "
         "participation (act|observe|wait), action (readable contribution produced only by you), intent (your immediate aim), "
+        "turn_delta (brief change claim, or empty if nothing changed), "
         "observation (what you personally observed or inferred, with uncertainty), self_update (your own continuing state), "
         "shared_effect_claim (a claim about effects on the shared situation, not automatically accepted as fact), and "
         "episode_signal (continue|ready).\n\n"
@@ -183,7 +192,7 @@ def action_instruction(context_packet: dict[str, Any], role_packet: dict[str, An
 
 def normalize_action_output(output: dict[str, Any], *, round_index: int, action_index: int) -> dict[str, Any]:
     content = str(output.get("content") or output.get("text") or output.get("action") or "").strip()
-    parsed: dict[str, Any] = {}
+    parsed: dict[str, Any] = output if isinstance(output.get("action"), str) else {}
     candidate = content.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     if candidate.startswith("{") and candidate.endswith("}"):
         try:
@@ -195,7 +204,7 @@ def normalize_action_output(output: dict[str, Any], *, round_index: int, action_
     participation = str(parsed.get("participation", "act")).strip().lower()
     if participation not in {"act", "observe", "wait"}:
         participation = "act"
-    action = str(parsed.get("action") or content).strip()
+    action = str(parsed["action"]).strip() if isinstance(parsed.get("action"), str) else content
     updates = parsed.get("state_updates", output.get("simulation_updates", {}))
     if not isinstance(updates, dict):
         updates = {}
@@ -210,6 +219,7 @@ def normalize_action_output(output: dict[str, Any], *, round_index: int, action_
         "content": action,
         "action": action,
         "participation": participation,
+        "turn_delta": str(parsed.get("turn_delta", "")).strip(),
         "intent": intent,
         "observation": str(parsed.get("observation", "")).strip(),
         "self_update": self_update,
@@ -243,4 +253,6 @@ def parse_director_control(content: str, *, default_guidance: str = "") -> dict[
         "reason": str(value.get("reason") or "").strip(),
         "shared_state_summary": str(value.get("shared_state_summary") or "").strip(),
         "state_patch": value.get("state_patch", {}) if isinstance(value.get("state_patch", {}), dict) else {},
+        "round_progress": value.get("round_progress", []) if isinstance(value.get("round_progress"), list) else [],
+        "scene_contract": value.get("scene_contract") if isinstance(value.get("scene_contract"), dict) else None,
     }

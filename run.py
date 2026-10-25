@@ -14,6 +14,11 @@ FRONTEND = ROOT / "frontend"
 MIN_NODE = (20, 19, 0)
 
 
+def _supported_node(version: tuple[int, int, int]) -> bool:
+    major = version[0]
+    return (major == 20 and version >= MIN_NODE) or (major >= 22 and version >= (22, 12, 0))
+
+
 def fail(message: str) -> None:
     print(f"\n[ERROR] {message}")
     print("\nPlease prepare dependencies first, then run this launcher again.")
@@ -45,9 +50,9 @@ def _check_node_version() -> None:
     version = _parse_semver(result.stdout)
     if version is None:
         fail(f"could not parse Node.js version: {result.stdout.strip()}")
-    if version < MIN_NODE:
+    if not _supported_node(version):
         fail(
-            "Node.js is too old for the current frontend stack. "
+            "Node.js is not supported by the current frontend stack. "
             f"Found {result.stdout.strip()}, required v20.19.0+ or v22.12.0+. "
             "Upgrade Node.js, then run: cd frontend && npm install"
         )
@@ -86,36 +91,47 @@ def check_ready() -> None:
         fail(f"backend Python dependencies are not ready: {exc}")
 
 
+def _stop_process(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    if sys.platform.startswith("win"):
+        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, check=False)
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
 def start() -> None:
     print("AUV launcher")
     print(f"Root: {ROOT}")
     print("\nStarting backend:  http://localhost:8000")
-    backend_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "app.main:app", "--reload", "--port", "8000"],
-        cwd=BACKEND,
-    )
-
-    print("Starting frontend: http://localhost:5173")
-    frontend_proc = subprocess.Popen(
-        [_npm_command(), "run", "dev"],
-        cwd=FRONTEND,
-    )
-
-    time.sleep(2)
-    webbrowser.open("http://localhost:5173")
-
-    print("\nAUV is running. Press Ctrl+C here to stop both services.")
+    processes: list[subprocess.Popen] = []
     try:
+        processes.append(subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "app.main:app", "--reload", "--port", "8000"], cwd=BACKEND,
+        ))
+        print("Starting frontend: http://localhost:5173")
+        processes.append(subprocess.Popen([_npm_command(), "run", "dev", "--", "--strictPort"], cwd=FRONTEND))
+        time.sleep(2)
+        if any(process.poll() is not None for process in processes):
+            fail("a service exited during startup. Check the error above.")
+        webbrowser.open("http://localhost:5173")
+        print("\nAUV is running. Press Ctrl+C here to stop both services.")
         while True:
-            if backend_proc.poll() is not None:
-                fail("backend process exited.")
-            if frontend_proc.poll() is not None:
-                fail("frontend process exited.")
+            if any(process.poll() is not None for process in processes):
+                fail("a service process exited. Check the error above.")
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nStopping AUV...")
-        backend_proc.terminate()
-        frontend_proc.terminate()
+    except OSError as exc:
+        fail(f"could not start a service: {exc}")
+    finally:
+        for process in reversed(processes):
+            _stop_process(process)
 
 
 if __name__ == "__main__":

@@ -15,8 +15,11 @@ from app.execution.dynamic_state import (
     parse_state_coder_output,
     simulation_state_for_node,
 )
-from app.execution.engine import WorkflowEngine, WorkflowValidationError
-from app.execution.simulation_state import init_simulation_state
+from app.execution.checkpoints import restore_continuous_checkpoint
+from app.execution.engine import WorkflowEngine
+from app.execution.graph import WorkflowValidationError, validate_workflow
+from app.execution.memory import memories_at_rollback
+from app.execution.simulation_state import init_simulation_state, normalize_simulation_state
 from app.models import RunEventRecord, RunRecord, WorkflowRecord
 from app.schemas import EnvironmentSpec, NodePosition, RollbackRequest, RunEvent, RunRequest, WorkflowDefinition, WorkflowNode
 from app.service import build_rollback_request, get_events
@@ -230,7 +233,7 @@ def test_continuous_dynamic_state_requires_director() -> None:
     )
 
     try:
-        WorkflowEngine._validate(workflow)
+        validate_workflow(workflow)
     except WorkflowValidationError as exc:
         assert "requires a Director" in str(exc)
     else:
@@ -273,10 +276,12 @@ def test_dynamic_state_checkpoint_restores_exact_private_snapshot() -> None:
 
     _, request = build_rollback_request(db, "source", RollbackRequest(event_seq=int(event.seq)))
     context = {"_simulation": {"dynamic_state": {"version": 1}}}
-    WorkflowEngine._restore_continuous_checkpoint(context, request)
+    restore_continuous_checkpoint(context, request)
     public_event = get_events(db, "source", after_seq=0, limit=10).events[0]
 
-    assert context["_simulation"] == snapshot["simulation_state"]
+    assert context["_simulation"]["dynamic_state"] == snapshot["simulation_state"]["dynamic_state"]
+    assert context["_simulation"]["runtime_metrics"] == {"progress": 0.0}
+    assert context["_simulation"]["version"] == 2
     assert context["_continuous_resume"]["actions"] == snapshot["actions"]
     assert "_rollback_snapshot" not in public_event.payload
 
@@ -294,7 +299,7 @@ def test_rollback_memory_view_excludes_future_source_run_memories() -> None:
         {"run_id": "source", "source_event_seq": None, "content": "untraceable source-run memory"},
     ]
 
-    filtered = WorkflowEngine._memories_at_rollback(memories, request)
+    filtered = memories_at_rollback(memories, request)
 
     assert [item["content"] for item in filtered] == ["prior-run memory", "before checkpoint"]
 
@@ -325,6 +330,36 @@ def test_existing_continuous_workflow_enables_dynamic_state_without_migration() 
         environment=EnvironmentSpec(simulation={"execution_model": "continuous"}),
     )
     assert init_simulation_state(workflow)["dynamic_state"]["enabled"] is True
+
+
+def test_obsolete_state_fields_are_ignored() -> None:
+    state = normalize_simulation_state(
+        {
+            "variables": {"progress": 0.4, "risk": 0.9},
+            "world_state": {
+                "current_time": "night",
+                "current_location": "station",
+                "conditions": ["flooded"],
+                "active_events": ["duplicated event"],
+            },
+            "state_memory": {"current_states": {"relationship_state": "contested"}},
+            "public_updates": [{"text": "duplicate"}],
+            "active_proposals": {"a": "duplicate"},
+            "shared_context": "duplicate summary",
+            "dynamic_state": init_dynamic_state({"enabled": True}),
+        }
+    )
+
+    assert state["runtime_metrics"] == {"progress": 0.0}
+    assert state["world_state"] == {
+        "current_time": "night",
+        "current_location": "station",
+        "temporal_scope": "",
+        "spatial_scope": "",
+    }
+    assert state["dynamic_state"]["values"] == {}
+    for removed in ["variables", "state_memory", "public_updates", "active_proposals", "shared_context"]:
+        assert removed not in state
 
 
 def test_continuous_engine_applies_state_patch_inside_existing_director_audit() -> None:

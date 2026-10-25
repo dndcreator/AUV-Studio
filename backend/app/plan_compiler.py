@@ -731,7 +731,8 @@ def _build_workflow_from_extracted(extracted: dict, req: PlanCompileRequest, sim
     edges: list[WorkflowEdge] = []
     mode = str(simulation_blueprint.get("mode", "custom"))
     director_guardrails = (
-        "Preserve character autonomy and the user's requested tone. Control only pacing, length, detail, and drift; "
+        "Preserve character autonomy and the user's requested tone. Control pacing, selective detail, and drift; "
+        "treat length limits as budgets, never fill them with repetition; "
         "do not choose actions for the roles."
         if mode == "roleplay"
         else "Keep the simulation aligned, traceable, concise, and bounded by the requested horizon."
@@ -1230,11 +1231,8 @@ def _build_simulation_blueprint(extracted: dict, req: PlanCompileRequest) -> dic
         "detail_granularity": "detailed" if mode == "roleplay" else "concise",
         "phases": phases,
         "required_outputs": submode_contract.get("required_outputs", contract.required_outputs),
-        "variables": {
+        "runtime_metrics": {
             "progress": 0.0,
-            "confidence": 0.35 if mode == "research" else 0.5,
-            "risk": 0.25 if mode == "research" else 0.4,
-            "alignment": 0.5,
         },
         "world_state": {
             "time_context": time_context,
@@ -1243,8 +1241,6 @@ def _build_simulation_blueprint(extracted: dict, req: PlanCompileRequest) -> dic
             "current_location": spatial_context,
             "temporal_scope": time_context,
             "spatial_scope": spatial_context,
-            "conditions": _as_str_list(env.get("conditions", [])),
-            "active_events": [],
         },
         "intervention_policy": "director_on_deviation",
     }

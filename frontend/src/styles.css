@@ -500,20 +500,6 @@ body,
   pointer-events: none;
 }
 
-.react-flow__node-default {
-  border: 1px solid rgba(240, 185, 71, 0.55) !important;
-  border-radius: 6px !important;
-  background: linear-gradient(180deg, #fff2c8, #d9efe0) !important;
-  color: #181712 !important;
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.65) !important;
-  font-weight: 800 !important;
-}
-
-.react-flow__node-default.selected {
-  border-color: #48b9c7 !important;
-  box-shadow: 0 0 0 2px rgba(72, 185, 199, 0.24), 0 14px 30px rgba(0, 0, 0, 0.32) !important;
-}
-
 .react-flow__edge-path {
   stroke: rgba(240, 185, 71, 0.7) !important;
   stroke-width: 2;
@@ -1621,21 +1607,11 @@ button.mission-card {
   letter-spacing: 0.18em;
 }
 
-.react-flow__node-default {
-  min-width: 150px !important;
-  padding: 12px 14px !important;
-  border-radius: 18px !important;
-  background:
-    radial-gradient(circle at 20% 0%, rgba(43, 228, 167, 0.34), transparent 44%),
-    linear-gradient(180deg, #fff5d4, #dff8e9) !important;
-  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
-}
-
 .react-flow__handle {
-  width: 10px !important;
-  height: 10px !important;
-  background: var(--brand) !important;
-  border: 2px solid #07110d !important;
+  width: 10px;
+  height: 10px;
+  background: var(--brand);
+  border: 2px solid #07110d;
 }
 
 .react-flow__controls,
@@ -2665,11 +2641,11 @@ body,
 }
 
 .react-flow__node-default {
-  border: 5px solid #080806 !important;
-  border-radius: 0 !important;
-  background: #ffe100 !important;
-  color: #080806 !important;
-  box-shadow: 7px 7px 0 #000 !important;
+  border: 5px solid #080806;
+  border-radius: 0;
+  background: #ffe100;
+  color: #080806;
+  box-shadow: 7px 7px 0 #000;
   transform: rotate(-1deg);
 }
 
@@ -2678,9 +2654,9 @@ body,
 }
 
 .react-flow__node-default.selected {
-  border-color: #080806 !important;
-  background: #67f7ff !important;
-  box-shadow: 9px 9px 0 #000 !important;
+  border-color: #080806;
+  background: #67f7ff;
+  box-shadow: 9px 9px 0 #000;
 }
 
 .react-flow__edge-path {
@@ -2690,8 +2666,8 @@ body,
 }
 
 .react-flow__handle {
-  background: #ff2d2d !important;
-  border: 3px solid #080806 !important;
+  background: #ff2d2d;
+  border: 3px solid #080806;
 }
 
 .react-flow__controls,
@@ -2735,7 +2711,7 @@ body,
 }
 
 .dock-pill:not(.primary):not(.run) {
-  background: #fff4a6 !important;
+  background: #fff4a6;
   color: #080806 !important;
 }
 
@@ -3455,7 +3431,7 @@ body,
 
 /* Preset entity node identity: only applies to AUV world-entity presets. */
 .entity-card,
-.react-flow__node-default.entity-flow-node {
+:where(.react-flow__node-default.entity-flow-node) {
   --entity-accent: #ffe100;
   --entity-accent-2: #ff9f00;
   --entity-paper: #fff7bc;
@@ -3463,7 +3439,7 @@ body,
 }
 
 .entity-card-individual,
-.entity-flow-node-individual {
+.react-flow__node-default.entity-flow-node-individual {
   --entity-accent: #ff3f2f;
   --entity-accent-2: #ffe100;
   --entity-paper: #fff0b2;
@@ -3471,7 +3447,7 @@ body,
 }
 
 .entity-card-group,
-.entity-flow-node-group {
+.react-flow__node-default.entity-flow-node-group {
   --entity-accent: #16c172;
   --entity-accent-2: #ffe100;
   --entity-paper: #e8ffd0;
@@ -3479,7 +3455,7 @@ body,
 }
 
 .entity-card-organization,
-.entity-flow-node-organization {
+.react-flow__node-default.entity-flow-node-organization {
   --entity-accent: #2f7dff;
   --entity-accent-2: #ffe100;
   --entity-paper: #dceaff;
@@ -3487,7 +3463,7 @@ body,
 }
 
 .entity-card-environment,
-.entity-flow-node-environment {
+.react-flow__node-default.entity-flow-node-environment {
   --entity-accent: #00d4ff;
   --entity-accent-2: #91ffea;
   --entity-paper: #dcfff8;
@@ -3495,7 +3471,7 @@ body,
 }
 
 .entity-card-event,
-.entity-flow-node-event {
+.react-flow__node-default.entity-flow-node-event {
   --entity-accent: #ff7a00;
   --entity-accent-2: #ffdf3d;
   --entity-paper: #fff0c2;
@@ -3503,7 +3479,7 @@ body,
 }
 
 .entity-card-artifact,
-.entity-flow-node-artifact {
+.react-flow__node-default.entity-flow-node-artifact {
   --entity-accent: #b36bff;
   --entity-accent-2: #ffe100;
   --entity-paper: #f4ddff;
@@ -3511,7 +3487,7 @@ body,
 }
 
 .entity-card-human_gate,
-.entity-flow-node-human_gate {
+.react-flow__node-default.entity-flow-node-human_gate {
   --entity-accent: #080806;
   --entity-accent-2: #ff3f2f;
   --entity-paper: #fffbe0;

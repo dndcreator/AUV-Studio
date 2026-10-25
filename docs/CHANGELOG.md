@@ -3,6 +3,96 @@
 本文件用于持续记录 AUV 的产品能力、接口、前端入口和重要实现决策，避免后续遗忘上下文。
 
 ## [Unreleased]
+### Interrupted Runs And Complete Report Sources (2026-10-22 19:47 +08:00)
+
+- Found two remaining correctness gaps: unclean exits left active runs permanently pending/running, while report generation silently discarded everything after the first 16,000 characters. Retry also discarded the user's original input.
+- Chose recoverable failure rather than automatic replay: tools, external Agents and model calls cannot be assumed side-effect-free. Added an OS-held, database-specific single-instance lease before startup recovery; the OS releases it on process death, and a second backend cannot mark an active owner's jobs interrupted. The local runtime now explicitly requires file-backed SQLite and a single backend process.
+- Extracted `run_lifecycle.py` for queue/startup interruption handling. Active runs and active node records become failed with a signed audit event in the same transaction; completed outputs, checkpoints, Dynamic State snapshots and waiting-human runs remain untouched. Recovery is idempotent and makes no model calls. Retry preserves original user inputs but does not replay stale human-response/rollback control envelopes.
+- Removed prefix-only report and supplied-evidence clipping. Reports receive the complete readable material within `AUV_REPORT_SOURCE_MAX_CHARS` (default 64,000 characters), including the ending; oversized material returns HTTP 413 before any writer call. Reduced duplicated briefing excerpts rather than introducing automatic summarization calls. The character ceiling is an input guard, not an exact token or price guarantee.
+- Added offline tests for competing locks, actual child-process unclean exit, startup ordering/idempotency, atomic status/audit failure, preservation of outputs/checkpoints, full beginning/middle/ending/evidence forwarding across report modes, over-budget rejection at service/HTTP levels, and retry input retention.
+- Verified 179 backend tests, 55 frontend tests, production build, Python compilation and whitespace checks. The system pytest temporary directory was inaccessible; recovery tests ran in a unique ignored workspace data directory. No paid model calls, new UI settings or explanatory UI copy were introduced.
+- Limits: interruption recovery preserves the last durable evidence, not an in-flight model response. Continue via an existing checkpoint rollback or explicitly retry; no claim of exactly-once external side effects. Oversized report material is rejected, not silently summarized. Large-scale throughput and real-model writing quality still require explicit evaluation.
+
+### Reliability And Local API Boundaries (2026-10-22 19:34 +08:00)
+
+- Found gaps beyond the passing baseline: partial launcher failures could leave services running, permanent Provider errors were retried, engine-reported failures counted as completed queue tasks, and overlapping frontend polls could duplicate or omit events.
+- Kept the local single-user architecture and existing simulation contracts. Extracted polling rather than introducing another state store; retained `run_events` and its audit chain as the process authority. Changed frontend saving to use the existing PUT upsert instead of treating every update error as a missing project.
+- Corrected Node version checks, made Vite port conflicts fail explicitly, and added startup/interrupt cleanup of started services, including Windows process trees. Permanent HTTP 400/401/403/404 responses now fail immediately; 408/429/5xx and transient failures retain bounded retries.
+- Queue metrics now inspect persisted execution status. Worker exceptions and graceful shutdown mark active/pending records failed and append signed events; error-persistence failures are logged without permanently removing the worker. Average queue wait uses the number of started jobs.
+- Added a status-only database query and API. Frontend polling serializes requests, cancels stale/15-second requests, paginates up to five 500-event pages per tick, deduplicates event sequences, and waits for final events before publishing terminal state. Metrics/checkpoints refresh at a lower frequency; replay/project changes reset Live snapshots.
+- Restricted browser Origins to an explicit local allowlist while preserving no-Origin native/Agent API access. Bounded streamed evidence uploads before parsing, checked Office ZIP expansion limits, and offloaded local parsing from the async request loop. Unified API/media asset locations through `VITE_API_BASE_URL`.
+- Removed unused UI state/calculations and enabled TypeScript unused-code checks. No visual redesign, explanatory UI copy, login, content grading, dependency installation, or paid model calls were introduced.
+- The stopped-run regression exposed a scheduling race before React committed the terminal state; the polling scope now stops its own next tick once the final event page is drained.
+- Verification: 169 backend tests and 55 frontend tests, production build, Python compilation, and `git diff --check`. New offline cases include real engine queue execution, shutdown/audit integrity, failure-write resilience, Origin rejection, chunked upload limits, stale responses, terminal pagination, and polling timeouts.
+- Remaining risks: unclean process termination still needs explicit run recovery; report generation still selects only the first 16,000 source characters. Media polling recovery and large orchestration modules warrant separate focused work. Offline regression does not establish real-model narrative quality or large-scale throughput.
+
+### Studio Finish Pass (2026-10-21)
+
+- Preserved the yellow-TV identity, warm paper panels, black outlines, preset entity palettes, and draggable Director; refined spacing, type hierarchy, borders, shadows, canvas atmosphere, and Live presentation without adding explanatory UI copy.
+- Consolidated import/export into an accessible project-actions dropdown with outside-click/Escape dismissal; retained saving, opening, running, and stopping as visible primary actions.
+- Added a decoupled simulation-node renderer with entity-specific line icons and bilingual status labels; derived statuses from the current visible event range without writing presentation fields into editable workflow data.
+- Retained connection handles and existing custom-node semantics, bounded fit-view enlargement, and lowered the canvas minimum zoom so larger networks can fit narrow screens.
+- Refined entity-library rows, project search, model/report dialogs, controls, keyboard focus, loading/disabled states, and 320px/390px layouts. Closed drawers are hidden from focus and assistive navigation; all drawer content stays in a single natural scroll context.
+- Added reduced-motion support and offline tests for project transfers, menu dismissal, start/stop controls, custom nodes, language updates, handle preservation, event ordering, and replay-state reset.
+- Verified all 44 frontend tests, the production build, and `git diff --check`; inspected Chinese/English desktop and 320px/390px previews, and browser-checked menu focus return, closed-drawer visibility, natural scrolling, and reduced motion. No model API calls were made.
+
+### Fixed Writing Benchmarks
+
+- Added versioned novel and screenplay writing profiles using one fixed source, shared fidelity/readability/economy criteria, separate form/style criteria, and fixed 0-4 scoring anchors.
+- Added an opt-in `writing_styles` benchmark: two writing calls and one optional shared judging call, with the existing hard budgets and no simulation rerun.
+- Compute per-profile totals in code; missing, duplicate, or invalid judge scores remain unavailable rather than passing. Compare prior style scores only when source, writing contract, rubric, and judge model match.
+- Reduced ordinary Eval output to one latest Markdown record per scenario containing generated text and brief review; removed repeated raw Full Logs, timestamped JSON sidecars, and a second judge-material builder. Historical artifacts remain untouched, and product Full Log remains available.
+- Shared production narrative prompts with writing evaluations: default to finished fiction, prioritize requested form/style, preserve outcomes, and avoid minimum word counts or report-like operational metrics in literary output.
+- Added offline coverage for profile-specific requirements, comparison invalidation, single-file overwrite, scoring validation, production style forwarding, and three-call preflight. No paid calls are triggered by ordinary tests.
+- Verified all 141 backend tests, the three-call writing preflight, and whitespace checks; this update made no paid model calls or frontend changes.
+
+### Scene Contract And Turn Delta
+
+- Added a decoupled `scene_control` module for scene goals, pacing, selective detail, progress scale, and semantic exit conditions.
+- Reused initial attention routing for Director scene setup and existing boundary audits for per-round progress assessment; added no separate per-turn LLM call or UI settings.
+- Added possibly empty Turn Delta claims; Director compares claims with actual actions, and runtime counts consecutive stagnant interaction rounds without equating slow development with failure.
+- Kept scene control outside authoritative Dynamic State and added audited-boundary checkpoints that restore contracts, counters, and cursors.
+- Removed minimum-action stopping gates and word-count quality rewards, made detailed entity prompts selective, and discouraged padding in summaries and reports.
+- Added opt-in slow-dialogue and research-collaboration evaluations with hard call/token budgets and compact complete-process material for advisory judging.
+- Real endpoint checks exposed unnecessary continuation after goal completion and a global-round numbering error; refined audit prompts and retained conservative handling of missing judgments. Final dialogue and research samples passed protocol checks; see `docs/evaluations/2026-10-19-scene-control.md` for costs, excerpts, and limitations.
+- Verified 130 backend tests, 38 frontend tests, the production build, and `git diff --check`; ordinary test execution remains isolated from paid evaluations.
+
+### Studio Visual Polish
+
+- Refined the yellow TV studio palette, canvas texture, spacing, controls, Live window, drawers, and report dialogs; retained the established visual identity.
+- Added shared SVG action icons and current-panel feedback to the studio dock; clicking the active dock control closes its panel.
+- Localized mode, run-state, World Book, and event-count labels through the existing i18next resources.
+- Corrected CSS loading order and removed overriding node styles so preset entity colors and silhouettes render correctly; unclipped event-node connection handles.
+- Moved the minimap above Live, improved narrow-screen layouts, and made imported files keyboard-accessible.
+- Kept studio presentation in a dedicated stylesheet and added no explanatory UI copy.
+- Verified 38 frontend tests, the production build, and Edge previews at 1440px and 390px, including bilingual labels, panel toggling, Director visibility, and keyboard-accessible file import.
+
+### Architecture Decoupling
+
+- Extracted DAG validation, topology, conditional routing, descendant scopes, and edge interaction formatting from `WorkflowEngine` into `execution/graph.py`.
+- Extracted fact/character memory persistence, rollback filtering, recall scoring, node selection, and Director override reads into `execution/memory.py`.
+- Reduced `WorkflowEngine` to orchestration calls instead of retaining graph and memory policy as private methods.
+- Extracted evidence, full-live transcript, and run-result overlays from `App.tsx` into `components/RunOverlays.tsx` without changing visual behavior.
+- Added focused component coverage for the extracted run overlays and retained end-to-end engine coverage through the new module boundaries.
+- Extracted event redaction, hash-chain persistence, human-resume events, and historical output loading into `execution/events.py`.
+- Extracted context and continuous rollback snapshots into `execution/checkpoints.py`.
+- Extracted preflight, quality correction, decision detection, and voting rules into pure `execution/director_policy.py` functions.
+- Added `hooks/useLiveBroadcast.ts` so Live pacing, cursor state, readable rows, and broadcast snapshots no longer live in `App.tsx`.
+- Added direct regression coverage for Live pacing, role labels, and broadcast cursor reset.
+- Reduced `WorkflowEngine` from roughly 2,095 lines before decoupling to roughly 1,397 lines while retaining the same execution contract.
+
+### State Convergence
+
+- Made Dynamic State the sole authoritative domain-state layer for continuous simulation.
+- Removed runtime production of `state_memory`, `public_updates`, `active_proposals`, `shared_context`, `episode_summary`, and duplicate simulation timelines.
+- Replaced semantic-looking `variables` (`confidence`, `risk`, `alignment`) with `runtime_metrics.progress`; domain confidence and risk now belong in Dynamic State when actually established.
+- Restricted `world_state` to time and spatial coordinates; environmental conditions belong in Dynamic State instead of being duplicated with event history.
+- Removed legacy state migration and fallback reads. Runtime state now accepts only the v2 field set; obsolete fields are ignored rather than converted.
+- Removed `state` and `other` from the Memory API contract and runtime recall. Fact and character memories remain historical evidence, while current state comes from Dynamic State.
+- Renamed the role packet's `current_character_state` to `character_history`, preventing the latest memory record from competing with private Dynamic State as current truth.
+- Removed mutable Director summaries from the runtime state; routing and node context now use Dynamic State, task contract, world coordinates, and recent actions.
+- Updated frontend monitoring to display real runtime progress and Dynamic State without legacy task/collaboration/relationship fallbacks.
+
 ### Dynamic State Hardening
 
 - Enforced declared Dynamic State value types instead of accepting arbitrary JSON under every concept.
@@ -11,7 +101,7 @@
 - Made concept scope, owner, visibility, and value type immutable after creation, and rejected private writes not sourced from the owning node.
 - Required every schema/value operation to cite an exact node, action index, and event sequence from the audited action batch.
 - Made continuous Dynamic State explicitly require a Director node instead of silently remaining stale without one.
-- Defined Dynamic State as the continuous domain-fact layer, while `world_state` remains environment coordinates, `variables` remains runtime telemetry, and `state_memory` remains DAG compatibility only.
+- Defined Dynamic State as the continuous domain-fact layer; the later State Convergence change removed the temporary legacy runtime layers entirely.
 - Added private, exact Dynamic State snapshots to internal rollback checkpoints while keeping them out of public event payloads.
 - Prevented rollback branches from recalling memories written by the source run after the selected checkpoint.
 - Added the opt-in `dynamic_state_quality` real-model scenario to detect state bloat, transient psychological detail, invalid provenance, and private-owner leakage under the existing call/token/cost limits.

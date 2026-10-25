@@ -306,7 +306,7 @@ export type MemoryItem = {
   role: string;
   content: string;
   tags: string[];
-  kind: "fact" | "state" | "character" | "other";
+  kind: "fact" | "character";
   scope: string;
   subject: string;
   importance: number;

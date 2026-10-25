@@ -6,7 +6,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import Base
-from app.execution.engine import WorkflowEngine, WorkflowValidationError
+from app.execution.engine import WorkflowEngine
+from app.execution.graph import WorkflowValidationError, validate_workflow
+from app.execution.memory import should_write_memory
 from app.execution.simulation_loop import action_instruction, build_loop_policy, normalize_action_output
 from app.observability import perf_tracker
 from app.queue_manager import RunQueueManager
@@ -79,7 +81,7 @@ def test_cycle_validation() -> None:
     )
     engine = WorkflowEngine(provider=FakeProvider())  # type: ignore[arg-type]
     try:
-        engine._validate(wf)
+        validate_workflow(wf)
         assert False, "expected cycle validation error"
     except WorkflowValidationError:
         assert True
@@ -150,7 +152,7 @@ def test_autonomous_action_contract_is_rich_but_limited_to_self() -> None:
         },
     )
     assert "participation (act|observe|wait)" in prompt
-    assert "as rich as the requested deliverable needs" in prompt
+    assert "Detail means selectively showing meaningful particulars" in prompt
     assert "never write another participant's action" in prompt
     assert "never turn an unobserved assumption into a global fact" in prompt
 
@@ -541,7 +543,7 @@ def test_director_override_memory_is_pulled_into_global_guidance() -> None:
             node_id="director_console",
             role="director_override",
             content="Focus only on sample size quality and cost control.",
-            tags_json='["director_override","set_focus"]',
+            tags_json='{"kind":"fact","scope":"global","subject":"director","importance":0.9,"confidence":1.0,"source_event_seq":null,"trigger":"set_focus","tags":["director_override","set_focus"]}',
         )
     )
     db.commit()
@@ -610,11 +612,10 @@ def test_simulation_state_injected_and_emitted() -> None:
                 "mode": "research",
                 "research_question": "what will happen",
                 "phases": [{"id": "p1", "name": "Scope", "objective": "scope", "exit_criteria": "done"}],
-                "variables": {"progress": 0.1, "confidence": 0.4, "risk": 0.2, "alignment": 0.5},
+                "runtime_metrics": {"progress": 0.1},
                 "world_state": {
                     "current_time": "day 1 morning",
                     "current_location": "test lab / room A",
-                    "conditions": ["quiet"],
                 },
             },
         },
@@ -639,12 +640,12 @@ def test_simulation_state_injected_and_emitted() -> None:
     payload = __import__("json").loads(event_row.payload_json)
     assert "simulation_state" in payload
     assert isinstance(payload["simulation_state"], dict)
-    assert "variables" in payload["simulation_state"]
-    assert "state_memory" in payload["simulation_state"]
+    assert payload["simulation_state"]["runtime_metrics"]["progress"] == 0.22
+    assert "variables" not in payload["simulation_state"]
+    assert "state_memory" not in payload["simulation_state"]
     assert payload["simulation_state"]["world_state"]["current_time"] == "day 1 morning"
     assert payload["simulation_state"]["world_state"]["current_location"] == "test lab / room A"
-    assert isinstance(payload["simulation_state"]["state_memory"], dict)
-    assert "current_states" in payload["simulation_state"]["state_memory"]
+    assert "conditions" not in payload["simulation_state"]["world_state"]
     assert "_trace" in payload
     assert isinstance(payload["_trace"], dict)
     assert payload["_trace"].get("event_hash")
@@ -670,7 +671,7 @@ def test_run_metrics_computed() -> None:
     assert metrics.estimated_token_usage >= 0
 
 
-def test_three_layer_memory_written_and_injected() -> None:
+def test_history_memory_written_and_injected_without_duplicate_state_layer() -> None:
     db = make_db()
     provider = CapturingProvider()
     wf = WorkflowDefinition(
@@ -713,7 +714,7 @@ def test_three_layer_memory_written_and_injected() -> None:
     rows = db.query(MemoryRecord).filter(MemoryRecord.run_id == run_id).all()
     metas = [__import__("json").loads(row.tags_json) for row in rows]
     kinds = {meta.get("kind") for meta in metas if isinstance(meta, dict)}
-    assert {"fact", "state", "character"}.issubset(kinds)
+    assert {"fact", "character"}.issubset(kinds)
     assert all(meta.get("source_event_seq") for meta in metas if isinstance(meta, dict))
 
     bob_row = db.query(NodeRunRecord).filter(NodeRunRecord.run_id == run_id, NodeRunRecord.node_id == "bob").first()
@@ -721,37 +722,26 @@ def test_three_layer_memory_written_and_injected() -> None:
     bob_input = __import__("json").loads(bob_row.input_json)
     injected = bob_input.get("_memory", [])
     assert isinstance(injected, list)
-    assert any(item.get("kind") == "state" for item in injected if isinstance(item, dict))
     assert "Facts:" in provider.user_prompt
-    assert "Current State:" in provider.user_prompt
     assert "Character State:" in provider.user_prompt
 
 
 def test_memory_write_trigger_filters_trivial_facts() -> None:
     trivial_node = make_node("p", "prompt", config={"template": "ok"})
-    assert WorkflowEngine._should_write_memory(
+    assert should_write_memory(
         kind="fact",
         node=trivial_node,
         content="ok",
         importance=0.55,
         interactions=[],
     ) is False
-    assert WorkflowEngine._should_write_memory(
+    assert should_write_memory(
         kind="fact",
         node=trivial_node,
         content="The group reaches a decision after a conflict.",
         importance=0.55,
         interactions=[],
     ) is True
-    assert WorkflowEngine._should_write_memory(
-        kind="state",
-        node=trivial_node,
-        content='{"task_state":"planning"}',
-        importance=0.8,
-        state_before={"current_states": {"task_state": "planning"}},
-        state_after={"current_states": {"task_state": "planning"}},
-        interactions=[],
-    ) is False
 
 
 def test_director_quality_correction_guides_following_node() -> None:
@@ -857,7 +847,7 @@ def test_report_writer_receives_readable_material_without_provider_raw_data() ->
             db=db,
             provider=report_provider,  # type: ignore[arg-type]
             run_id=run_id,
-            request=RunReportRequest(mode="story", length="short"),
+            request=RunReportRequest(mode="story", length="short", style_prompt="Write a restrained screenplay."),
         )
     )
 
@@ -867,6 +857,9 @@ def test_report_writer_receives_readable_material_without_provider_raw_data() ->
     assert '"raw"' not in prompt
     assert '"choices"' not in prompt
     assert "payload=" not in prompt
+    assert "Write a restrained screenplay." in prompt
+    assert "no minimum word count" in prompt
+    assert "Observed run evidence" not in prompt
     assert report.title.startswith("Simulation Narrative")
 
 
@@ -1096,7 +1089,8 @@ def test_entity_agent_can_use_external_execution_mode() -> None:
     assert output["agent_id"] == "office coworkers"
     assert "Entity profile" in output["text"]
     assert "not a single person" in output["text"]
-    assert "typical short quotes" in output["text"]
+    assert "representative remarks" in output["text"]
+    assert "not a checklist or minimum length" in output["text"]
 
 
 def test_entity_agent_injects_entity_specific_detail_granularity_to_builtin_llm() -> None:
@@ -1135,8 +1129,9 @@ def test_entity_agent_injects_entity_specific_detail_granularity_to_builtin_llm(
     engine = WorkflowEngine(provider=provider)  # type: ignore[arg-type]
     __import__("asyncio").run(engine.run(db=db, workflow=wf, request=RunRequest(input={})))
     assert "Detail granularity" in provider.user_prompt
-    assert "key spoken lines" in provider.user_prompt
-    assert "private thoughts" in provider.user_prompt
+    assert "specific words" in provider.user_prompt
+    assert "not a checklist or minimum length" in provider.user_prompt
+    assert "private experience" in provider.user_prompt
 
 
 def test_external_agent_injects_background_prompt() -> None:

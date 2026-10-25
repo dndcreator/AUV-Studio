@@ -3,8 +3,9 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import "./i18n";
-import "./styles.css";
 import "reactflow/dist/style.css";
+import "./styles.css";
+import "./styles/studio.css";
 
 const queryClient = new QueryClient();
 

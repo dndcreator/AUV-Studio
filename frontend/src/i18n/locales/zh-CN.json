@@ -1,5 +1,19 @@
 {
   "subtitle": "可视化多智能体模拟器",
+  "studio": {
+    "language": "语言",
+    "projectActions": "项目操作",
+    "edit": "编辑",
+    "open": "打开",
+    "worldBook": "世界书",
+    "eventCount": "{{count}} 条事件",
+    "mode": { "research": "研究", "roleplay": "角色扮演", "custom": "自定义" },
+    "status": {
+      "idle": "待机", "queued": "排队中", "pending": "准备中", "running": "运行中",
+      "waiting_human": "等待确认", "succeeded": "已完成", "failed": "运行失败",
+      "stopping": "正在停止", "stopped": "已停止", "cancelled": "已取消", "skipped": "已跳过"
+    }
+  },
   "create": "创建",
   "advanced": "高级",
   "modelSetup": "模型",

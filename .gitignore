@@ -21,6 +21,7 @@ backend/evals/results/
 *.db
 *.db-shm
 *.db-wal
+*.runtime.lock
 
 # IDE
 .idea/

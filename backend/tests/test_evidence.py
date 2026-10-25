@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import io
 import zipfile
+import pytest
 
 from app.evidence import parse_evidence_upload
+
+
+@pytest.mark.parametrize("name,content", [("large.docx", lambda: _docx("large " * 200)), ("large.xlsx", lambda: _xlsx())])
+def test_office_containers_have_their_own_expansion_limit(monkeypatch, name, content) -> None:
+    monkeypatch.setattr("app.evidence.MAX_EXPANDED_BYTES", 64)
+    result = parse_evidence_upload(name, content())
+    assert result["items"] == []
+    assert "expanded Office document" in result["errors"][0]["reason"]
 
 
 def _zip(files: dict[str, bytes]) -> bytes:

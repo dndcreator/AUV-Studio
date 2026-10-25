@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.evaluation.long_horizon import build_long_horizon_checkpoints
 from app.execution.entity_contracts import entity_action_contract
-from app.execution.engine import WorkflowEngine
+from app.execution.memory import select_memories_for_node
 from app.execution.simulation_loop import action_instruction, build_role_packet
 from app.long_horizon_eval import _load_scenario
 from app.schemas import WorkflowNode
@@ -61,5 +61,5 @@ def test_continuous_memory_selection_keeps_own_and_global_but_not_peer_facts() -
         {"id": 3, "node_id": "world", "scope": "global", "kind": "fact", "importance": 0.7, "content": "global"},
     ]
 
-    selected = WorkflowEngine._select_memories_for_node(memories, node, include_peer_facts=False)
+    selected = select_memories_for_node(memories, node, include_peer_facts=False)
     assert {item["content"] for item in selected} == {"own", "global"}

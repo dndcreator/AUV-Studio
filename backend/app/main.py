@@ -10,15 +10,16 @@ from time import perf_counter
 from typing import Any
 from urllib.parse import unquote
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from .config import settings
 from .db import Base, SessionLocal, engine, get_db
 from .execution.engine import WorkflowEngine
 from .execution.provider import build_provider
-from .evidence import parse_evidence_upload
+from .evidence import MAX_UPLOAD_BYTES, parse_evidence_upload
 from .models import RunRecord
 from .media_service import (
     MediaServiceError,
@@ -32,6 +33,8 @@ from .media_service import (
 from .node_specs import get_interaction_modes, get_node_specs
 from .observability import perf_tracker
 from .queue_manager import QueueTask, RunQueueManager
+from .run_lifecycle import recover_interrupted_runs
+from .runtime_lock import runtime_lease
 from .schemas import (
     AuditVerifyResponse,
     DirectorCapability,
@@ -114,25 +117,24 @@ run_queue_manager = RunQueueManager(worker_count=settings.run_worker_count, max_
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    try:
-        apply_stored_model_config(db, provider)
-    finally:
-        db.close()
-    run_queue_manager.start(workflow_engine)
-    try:
-        yield
-    finally:
-        await run_queue_manager.stop()
+    with runtime_lease(engine):
+        Base.metadata.create_all(bind=engine)
+        with SessionLocal() as db:
+            recover_interrupted_runs(db)
+            apply_stored_model_config(db, provider)
+        try:
+            run_queue_manager.start(workflow_engine)
+            yield
+        finally:
+            await run_queue_manager.stop()
 
 
 app = FastAPI(title="AUV Backend", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=list(settings.allowed_origins),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -143,6 +145,10 @@ async def perf_middleware(request: Request, call_next):  # type: ignore[no-untyp
     start = perf_counter()
     status_code = 500
     try:
+        origin = request.headers.get("origin")
+        if origin is not None and origin not in settings.allowed_origins:
+            status_code = 403
+            return Response(content='{"detail":"browser origin is not allowed"}', status_code=403, media_type="application/json")
         response = await call_next(request)
         status_code = response.status_code
         return response
@@ -321,13 +327,26 @@ async def compile_template_api(request: PlanCompileRequest) -> PlanCompileRespon
     return await compile_workflow_from_plan(provider=provider, request=request)
 
 
-@app.post("/api/evidence/parse")
+@app.post("/api/evidence/parse", openapi_extra={"requestBody": {"required": True, "content": {
+    "application/octet-stream": {"schema": {"type": "string", "format": "binary"}},
+}}})
 async def parse_evidence_api(
-    data: bytes = Body(media_type="application/octet-stream"),
+    request: Request,
     x_filename: str = Header(default="evidence.zip"),
 ) -> dict[str, Any]:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        if not content_length.isdecimal():
+            raise HTTPException(status_code=400, detail="invalid Content-Length")
+        if int(content_length) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="evidence upload exceeds 25 MB")
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="evidence upload exceeds 25 MB")
+        data.extend(chunk)
     try:
-        return parse_evidence_upload(unquote(x_filename), data)
+        return await run_in_threadpool(parse_evidence_upload, unquote(x_filename), bytes(data))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -406,8 +425,11 @@ async def retry_run_api(run_id: str, body: RetryRequest, db: Session = Depends(g
     if source is None:
         raise HTTPException(status_code=404, detail="run not found")
     workflow = get_workflow(db, source.workflow_id)
+    original_input = json.loads(source.input_json)
+    original_input.pop("_rollback", None)
+    original_input.pop("_human_response", None)
     request = RunRequest(
-        input={},
+        input=original_input,
         retry_from_run_id=run_id,
         retry_from_node=body.node_id,
     )
@@ -416,7 +438,7 @@ async def retry_run_api(run_id: str, body: RetryRequest, db: Session = Depends(g
         id=new_run_id,
         workflow_id=source.workflow_id,
         status="pending",
-        input_json="{}",
+        input_json=json.dumps(original_input, ensure_ascii=False),
         output_json="{}",
         error_json="null",
         retry_from_run_id=run_id,
@@ -527,6 +549,14 @@ def stop_run_api(run_id: str, db: Session = Depends(get_db)) -> dict[str, str]:
 @app.get("/api/runs/{run_id}", response_model=RunDetail)
 def get_run_api(run_id: str, db: Session = Depends(get_db)) -> RunDetail:
     return get_run(db, run_id)
+
+
+@app.get("/api/runs/{run_id}/status")
+def get_run_status_api(run_id: str, db: Session = Depends(get_db)) -> dict[str, str]:
+    run = db.query(RunRecord.id, RunRecord.status).filter(RunRecord.id == run_id).first()
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"run_id": run.id, "status": run.status}
 
 
 @app.get("/api/runs/{run_id}/events", response_model=EventsResponse)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from pathlib import Path
 
@@ -192,7 +193,7 @@ def test_eval_executes_isolated_end_to_end_with_fake_provider(monkeypatch) -> No
             if "route attention" in system_prompt:
                 content = '{"active_node_ids":["lin","chen"],"reason":"both own the conflict"}'
             elif "continuity auditor" in system_prompt:
-                content = '{"decision":"stop","guidance":"preserve established facts","reason":"a concrete state exists","shared_state_summary":"A limited launch and verification check are agreed."}'
+                content = json.dumps({"decision": "stop" if self.action_index >= 4 else "continue", "reason": "Verify the compromise after both responses."})
             elif "Record only the concrete outcome" in system_prompt:
                 content = "They agree to a limited launch after an assigned verification check."
             else:
@@ -218,7 +219,7 @@ def test_eval_executes_isolated_end_to_end_with_fake_provider(monkeypatch) -> No
         monkeypatch.setattr(runner, "apply_stored_model_config", lambda db, provider: None)
         monkeypatch.setattr(runner, "RESULTS_DIR", result_dir)
         scenario, workflow = load_scenario("roleplay_basic")
-        artifact, json_path, markdown_path = asyncio.run(
+        artifact, result_path = asyncio.run(
             _execute(
                 "roleplay_basic",
                 scenario,
@@ -230,8 +231,13 @@ def test_eval_executes_isolated_end_to_end_with_fake_provider(monkeypatch) -> No
         assert artifact["run"]["status"] == "succeeded"
         assert artifact["deterministic_evaluation"]["score"] == 100
         assert artifact["usage"]["calls"] <= 12
-        assert json_path.is_file()
-        assert "Manual Review" in markdown_path.read_text(encoding="utf-8")
+        assert result_path.name == "roleplay_basic.md"
+        record = result_path.read_text(encoding="utf-8")
+        assert "Simulation" in record
+        assert "Full Log" not in record
+        assert "provider_payload_marker" not in record
+        assert list(result_dir.iterdir()) == [result_path]
+        assert runner._latest_result("roleplay_basic")["run"]["status"] == "succeeded"
     finally:
         if result_dir.is_dir():
             for path in result_dir.iterdir():

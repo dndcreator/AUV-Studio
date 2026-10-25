@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import httpx
+import pytest
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
 from app.execution import provider as provider_module
-from app.execution.provider import OpenAICompatibleProvider, provider_accepts_keyless, provider_defaults
+from app.execution.provider import OpenAICompatibleProvider, ProviderError, provider_accepts_keyless, provider_defaults
 from app.models import ModelConfigRecord
 from app.schemas import ModelConfigRequest
 from app.service import save_model_config
@@ -42,6 +44,29 @@ class _Client:
     async def post(self, url: str, *, headers: dict, json: dict) -> _Response:
         self.calls.append({"url": url, "headers": headers, "json": json})
         return _Response(self.response)
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 408, 429, 500, 503])
+def test_provider_only_retries_recoverable_http_failures(monkeypatch, status) -> None:
+    calls = []
+    delays = []
+
+    class Client(_Client):
+        async def post(self, url, **_kwargs):
+            calls.append(url)
+            return httpx.Response(status, request=httpx.Request("POST", url), json={"error": "test failure"})
+
+    async def sleep(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(provider_module.asyncio, "sleep", sleep)
+    provider = OpenAICompatibleProvider("http://localhost:1234/v1", "", 10, 2)
+    with pytest.raises(ProviderError, match=f"HTTP {status}"):
+        asyncio.run(provider.chat("local", "system", "request"))
+    recoverable = status in {408, 429} or status >= 500
+    assert len(calls) == (3 if recoverable else 1)
+    assert delays == ([1, 2] if recoverable else [])
 
 
 def test_ollama_native_chat_is_keyless_and_uses_api_chat(monkeypatch) -> None:

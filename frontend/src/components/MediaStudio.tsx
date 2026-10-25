@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, apiAssetUrl } from "../api";
 import { inferMediaPreset, mediaPreset, mediaPresets, presetRequest, type MediaPresetId } from "../mediaProviders";
 import type { MediaConfig, MediaConfigRequest, MediaGeneration, MediaType, ModelConfigTestResponse } from "../types";
 
@@ -8,12 +8,6 @@ type Props = {
   sourceText: string;
   copy: (zh: string, en: string) => string;
 };
-
-function assetUrl(value: string): string {
-  if (!value) return "";
-  if (value.startsWith("/api/")) return `http://localhost:8000${value}`;
-  return value;
-}
 
 export function MediaStudio({ runId, sourceText, copy }: Props) {
   const initialPreset = mediaPreset("image", "openai");
@@ -159,7 +153,7 @@ export function MediaStudio({ runId, sourceText, copy }: Props) {
       {generation?.assets.length ? (
         <div className="media-assets">
           {generation.assets.map((asset) => {
-            const src = asset.data_url || assetUrl(asset.url);
+            const src = asset.data_url || apiAssetUrl(asset.url);
             return (
               <article className="media-asset" key={asset.asset_id}>
                 {asset.status === "completed" && src && asset.media_type === "image" ? <img src={src} alt={asset.prompt} /> : null}

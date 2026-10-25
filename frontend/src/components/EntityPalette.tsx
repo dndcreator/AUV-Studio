@@ -23,8 +23,10 @@ export function EntityPalette({ lang, counts, onAdd }: EntityPaletteProps) {
       {entityDefinitions.map((entity) => (
         <button className={`node-card entity-card entity-card-${entity.type}`} key={entity.type} onClick={() => onAdd(entity.type)}>
           <span className="entity-card-code">{entityCodes[entity.type]}</span>
-          <span className="node-card-title">{lang === "en-US" ? entity.titleEn : entity.titleZh}</span>
-          <span className="entity-card-count">{counts[entity.type] ?? 0}</span>
+          <span className="entity-card-title">
+            <span className="node-card-title">{lang === "en-US" ? entity.titleEn : entity.titleZh}</span>
+            <span className="entity-card-count">{counts[entity.type] ?? 0}</span>
+          </span>
           <span className="entity-card-add" aria-hidden="true">+</span>
         </button>
       ))}

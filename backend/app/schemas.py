@@ -429,7 +429,7 @@ class MemoryItem(BaseModel):
     role: str = ""
     content: str
     tags: list[str] = Field(default_factory=list)
-    kind: Literal["fact", "state", "character", "other"] = "fact"
+    kind: Literal["fact", "character"] = "fact"
     scope: str = "node"
     subject: str = ""
     importance: float = 0.5

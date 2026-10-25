@@ -14,14 +14,17 @@ import {
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api } from "./api";
-import { buildGlimpseRows, type GlimpseRow } from "./glimpse";
+import { useLiveBroadcast } from "./hooks/useLiveBroadcast";
+import { mergeRunEvents, useRunPolling } from "./hooks/useRunPolling";
 import { Topbar } from "./components/Topbar";
 import { StudioDock } from "./components/StudioDock";
 import { StudioStatusRail } from "./components/StudioStatusRail";
+import { studioNodeTypes } from "./components/SimulationNode";
+import { presentCanvasNodes } from "./canvasPresentation";
 import { EntityPalette } from "./components/EntityPalette";
 import { ModelConfigModal } from "./components/ModelConfigModal";
-import { MediaStudio } from "./components/MediaStudio";
 import { ProjectLibraryModal } from "./components/ProjectLibraryModal";
+import { EvidenceOverlay, LiveTranscriptOverlay, RunResultOverlay } from "./components/RunOverlays";
 import { normalizeModelProvider } from "./modelProviders";
 import { defaultEdgeInteraction, useSelectedStore, useWorkflowStore } from "./store";
 import { isEntityType, type EntityType } from "./simulationEntities";
@@ -42,7 +45,6 @@ import {
   formatDynamicStateValue,
   getModeVisibility,
   parseRoleCards,
-  parseSimulationSemantics,
   statusClass,
   toBroadcastLine
 } from "./appSupport";
@@ -98,7 +100,6 @@ export default function App() {
   };
   const [runId, setRunId] = useState<string | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
-  const [afterSeq, setAfterSeq] = useState(0);
   const [runStatus, setRunStatus] = useState<string>("idle");
   const [humanResponseText, setHumanResponseText] = useState("");
   const [humanResponder, setHumanResponder] = useState("user");
@@ -112,9 +113,6 @@ export default function App() {
   const [compareResult, setCompareResult] = useState<RunCompare | null>(null);
   const [timelineSeq, setTimelineSeq] = useState(0);
   const [isTimelinePlaying, setIsTimelinePlaying] = useState(false);
-  const [glimpseSnapshot, setGlimpseSnapshot] = useState<GlimpseRow[]>([]);
-  const glimpseCursorRef = useRef(0);
-  const glimpseRowsRef = useRef<GlimpseRow[]>([]);
   const completedRunShownRef = useRef<string | null>(null);
   const [reportMode, setReportMode] = useState<"briefing" | "narrative">("briefing");
   const [reportLength, setReportLength] = useState<"short" | "medium" | "long">("medium");
@@ -167,8 +165,6 @@ export default function App() {
   const [planText, setPlanText] = useState("");
   const [planMode, setPlanMode] = useState<"auto" | "research" | "roleplay" | "custom" | "collab">("auto");
   const [planSubmode, setPlanSubmode] = useState<"auto" | "simulation" | "research" | "consulting">("auto");
-  const [planMaxAgents, setPlanMaxAgents] = useState(6);
-  const [planBlueprint, setPlanBlueprint] = useState<Record<string, unknown> | null>(null);
   const [planDraft, setPlanDraft] = useState<PlanCompileResponse | null>(null);
   const [evidencePack, setEvidencePack] = useState<EvidencePack | null>(null);
   const [showEvidenceModal, setShowEvidenceModal] = useState(false);
@@ -236,6 +232,7 @@ export default function App() {
     }
     return events.filter((e) => Number(e.seq ?? 0) <= timelineSeq);
   }, [events, timelineSeq]);
+  const canvasNodes = useMemo(() => presentCanvasNodes(nodes, visibleEvents), [nodes, visibleEvents]);
   const simulationMeta = useMemo(
     () => ((workflow.environment?.simulation as Record<string, unknown> | undefined) ?? {}) as Record<string, unknown>,
     [workflow.environment]
@@ -243,33 +240,13 @@ export default function App() {
   const uiMode = (String(simulationMeta.ui_mode ?? "research") || "research") as UiMode;
   const monitorRows = useMemo(() => buildMonitorRows(visibleEvents, monitorMode, monitorNodeFilter), [visibleEvents, monitorMode, monitorNodeFilter]);
   const monitorStats = useMemo(() => buildMonitorStats(visibleEvents), [visibleEvents]);
-  const glimpseRows = useMemo(() => {
-    const labels = new Map(
-      nodes.map((node) => {
-        const data = (node.data as Record<string, unknown> | undefined) ?? {};
-        const config = (data.config as Record<string, unknown> | undefined) ?? {};
-        const fallback = node.id.startsWith("summary_") ? copy("旁白", "Narrator") : String(data.label ?? node.id);
-        return [node.id, String(config.entity_name ?? config.profile ?? fallback)] as const;
-      })
-    );
-    return buildGlimpseRows(visibleEvents).map((row) => ({ ...row, speaker: labels.get(row.speaker) ?? row.speaker }));
-  }, [visibleEvents, nodes, lang]);
-  const currentGlimpse = useMemo(() => {
-    if (glimpseSnapshot.length === 0) {
-      return null;
-    }
-    return glimpseSnapshot[glimpseSnapshot.length - 1] ?? null;
-  }, [glimpseSnapshot]);
-  const broadcastRows = useMemo(() => {
-    return glimpseSnapshot
-      .slice(-16)
-      .map((row) => ({
-        ...row,
-        line: toBroadcastLine(row, uiMode, broadcastTone)
-      }))
-      .filter((row) => row.line.trim().length > 0)
-      .reverse();
-  }, [glimpseSnapshot, uiMode, broadcastTone]);
+  const {
+    rows: glimpseRows,
+    snapshot: glimpseSnapshot,
+    current: currentGlimpse,
+    broadcastRows,
+    reset: resetLiveBroadcast,
+  } = useLiveBroadcast(visibleEvents, nodes, lang, uiMode, broadcastTone);
   const finalResultText = useMemo(() => {
     const completed = [...events]
       .reverse()
@@ -295,7 +272,6 @@ export default function App() {
   const modeVisibility = useMemo(() => getModeVisibility(uiMode), [uiMode]);
   const simulationSeed = String(simulationMeta.seed ?? "");
   const detailGranularity = String(simulationMeta.detail_granularity ?? "concise");
-  const simulationSemantics = parseSimulationSemantics(simulationMeta.semantics);
   const relationshipRows = useMemo(() => buildRelationshipRows(edges), [edges]);
   const preflightConfig = useMemo(() => {
     const raw = simulationMeta.preflight_confirm as Record<string, unknown> | undefined;
@@ -380,11 +356,7 @@ export default function App() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       const payload = buildWorkflowPayload();
-      try {
-        return await api.updateWorkflow(payload);
-      } catch {
-        return await api.createWorkflow(payload);
-      }
+      return api.updateWorkflow(payload);
     },
     onSuccess: () => setUiNotice({ type: "success", message: copy("已保存", "Saved") }),
     onError: (err) => setUiNotice({ type: "error", message: err instanceof Error ? err.message : copy("保存失败", "Save failed") })
@@ -393,11 +365,7 @@ export default function App() {
   const runMutation = useMutation({
     mutationFn: async () => {
       const payload = buildWorkflowPayload();
-      try {
-        await api.updateWorkflow(payload);
-      } catch {
-        await api.createWorkflow(payload);
-      }
+      await api.updateWorkflow(payload);
       return api.runWorkflow(payload.id, { task: runInput.trim() || payload.environment.scenario || payload.name });
     },
     onSuccess: (result) => {
@@ -405,16 +373,13 @@ export default function App() {
       setRunId(result.run_id);
       setRunStatus(result.status);
       setEvents([]);
-      setAfterSeq(0);
       setTimelineSeq(0);
       setMetrics(null);
       setCompareResult(null);
       setReportResult(null);
       setFullLogResult(null);
       setRunCheckpoints([]);
-      setGlimpseSnapshot([]);
-      glimpseCursorRef.current = 0;
-      glimpseRowsRef.current = [];
+      resetLiveBroadcast();
       setTraceContext(null);
       setTraceSeq(null);
       setTraceError("");
@@ -432,7 +397,7 @@ export default function App() {
       return api.stopRun(runId);
     },
     onSuccess: (data) => {
-      setRunStatus(data.status);
+      setRunStatus(data.status === "stopped" ? "stopping" : data.status);
       setUiNotice({
         type: "success",
         message: data.status === "stopping"
@@ -485,7 +450,6 @@ export default function App() {
       setRunId(data.run_id);
       setRunStatus(data.status);
       setEvents([]);
-      setAfterSeq(0);
       setTimelineSeq(0);
       setMetrics(null);
       setCompareResult(null);
@@ -493,6 +457,7 @@ export default function App() {
       setFullLogResult(null);
       setRunCheckpoints([]);
       setRollbackReason("");
+      resetLiveBroadcast();
       setTraceContext(null);
       setTraceSeq(null);
       setTraceError("");
@@ -512,7 +477,7 @@ export default function App() {
       setRunStatus(data.status);
       setHumanResponseText("");
       if (runId) {
-        pollEvents.mutate(runId);
+        void refreshRun(runId);
       }
       setUiNotice({ type: "success", message: copy("已继续运行", "Run resumed") });
     },
@@ -535,7 +500,7 @@ export default function App() {
       setDirectorResult(data);
       setDirectorText("");
       if (runId) {
-        pollEvents.mutate(runId);
+        void refreshRun(runId);
       }
       setUiNotice({ type: "success", message: copy("导演指令已应用", "Director command applied") });
     },
@@ -612,7 +577,6 @@ export default function App() {
 
   const acceptPlanCompileResponse = (data: PlanCompileResponse) => {
     setPlanDraft(data);
-    setPlanBlueprint(data.simulation_blueprint ?? ((data.workflow.environment?.simulation as Record<string, unknown>) ?? null));
     const detectedMode = String(data.simulation_blueprint?.mode ?? "custom");
     setPlanMode((detectedMode === "research" || detectedMode === "roleplay" || detectedMode === "custom") ? detectedMode : "custom");
     const detectedSubmode = String(data.simulation_blueprint?.submode ?? "auto");
@@ -652,7 +616,7 @@ export default function App() {
       api.compileTemplate({
         plan_text: directorText.trim(),
         mode: "auto",
-        max_agents: Math.max(2, Math.min(12, Number(planMaxAgents) || 6)),
+        max_agents: 6,
         language: lang === "en-US" ? "en" : "zh"
       }),
     onSuccess: (data) => {
@@ -670,43 +634,13 @@ export default function App() {
     onError: (err) => setUiNotice({ type: "error", message: err instanceof Error ? err.message : copy("导演安排失败", "Director arrangement failed") })
   });
 
-  const pollEvents = useMutation({
-    mutationFn: async (currentRunId: string) => api.getRunEvents(currentRunId, afterSeq),
-    onSuccess: async (data) => {
-      if (data.events.length > 0) {
-        setEvents((prev) => [...prev, ...data.events]);
-        const maxSeq = data.events[data.events.length - 1].seq ?? afterSeq;
-        setAfterSeq(maxSeq);
-      }
-      if (runId) {
-        const detail = await api.getRun(runId);
-        setRunStatus(detail.status);
-        const m = await api.getRunMetrics(runId);
-        setMetrics(m);
-        if (data.events.length > 0) {
-          const checkpoints = await api.getRunCheckpoints(runId, 80);
-          setRunCheckpoints(checkpoints.checkpoints);
-        }
-      }
-    }
+  const refreshRun = useRunPolling(runId, runStatus, (snapshot) => {
+    if (snapshot.events.length) setEvents((previous) => mergeRunEvents(previous, snapshot.events));
+    if (snapshot.status) setRunStatus(snapshot.status);
+    if (snapshot.metrics) setMetrics(snapshot.metrics);
+    if (snapshot.checkpoints) setRunCheckpoints(snapshot.checkpoints);
   });
-
-  useEffect(() => {
-    if (runId) {
-      api.getRunCheckpoints(runId, 80).then((data) => setRunCheckpoints(data.checkpoints)).catch(() => setRunCheckpoints([]));
-    } else {
-      setRunCheckpoints([]);
-    }
-  }, [runId]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (runId && (runStatus === "queued" || runStatus === "pending" || runStatus === "running" || runStatus === "stopping")) {
-        pollEvents.mutate(runId);
-      }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [pollEvents, runId, runStatus]);
+  useEffect(() => { setRunCheckpoints([]); setMetrics(null); }, [runId]);
 
   useEffect(() => {
     if (maxSeq > 0 && !isTimelinePlaying) {
@@ -739,24 +673,6 @@ export default function App() {
     }, 600);
     return () => clearInterval(timer);
   }, [events, isTimelinePlaying, maxSeq]);
-
-  useEffect(() => {
-    if (glimpseRows.length < glimpseCursorRef.current) {
-      glimpseCursorRef.current = 0;
-    }
-    glimpseRowsRef.current = glimpseRows;
-  }, [glimpseRows]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const rows = glimpseRowsRef.current;
-      const next = rows[glimpseCursorRef.current];
-      if (!next) return;
-      glimpseCursorRef.current += 1;
-      setGlimpseSnapshot((prev) => [...prev, next].slice(-30));
-    }, 6000);
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -948,7 +864,6 @@ export default function App() {
       }
       useWorkflowStore.getState().loadWorkflow(planDraft.workflow);
       setPlanDraft(null);
-      setPlanBlueprint(null);
       setActiveStudioPanel(null);
       setShowDirectorBubble(false);
       setUiNotice({ type: "success", message: copy("方案已应用，可以开始模拟", "Plan applied. The simulation is ready.") });
@@ -1044,9 +959,9 @@ export default function App() {
       setRunId(null);
       setRunStatus("idle");
       setEvents([]);
-      setAfterSeq(0);
       setShowOpenProject(false);
       setProjectSearch("");
+      resetLiveBroadcast();
       setUiNotice({ type: "success", message: copy(`已打开项目：${project.name}`, `Opened project: ${project.name}`) });
     } catch (err) {
       setUiNotice({ type: "error", message: err instanceof Error ? err.message : copy("项目打开失败", "Failed to open project") });
@@ -1123,153 +1038,45 @@ export default function App() {
         onSave={() => saveModelConfigMutation.mutate()}
         onTest={() => testModelConfigMutation.mutate()}
       />
-      {showEvidenceModal ? (
-        <div className="modal-backdrop evidence-backdrop" role="dialog" aria-modal="true">
-          <div className="modal-card evidence-card">
-            <div className="modal-head">
-              <div>
-                <span className="result-kicker">RESEARCH EVIDENCE</span>
-                <h2>{copy("添加研究证据", "Add Research Evidence")}</h2>
-              </div>
-            </div>
-            <label className="evidence-dropzone">
-              <strong>{evidenceMutation.isPending ? copy("正在本地解析...", "Parsing locally...") : copy("选择证据包或文件", "Choose evidence package or file")}</strong>
-              <span>ZIP · XLSX · DOCX · CSV · JSON · TXT · MD</span>
-              <input
-                type="file"
-                accept=".zip,.xlsx,.docx,.csv,.json,.txt,.md"
-                disabled={evidenceMutation.isPending}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) evidenceMutation.mutate(file);
-                  event.currentTarget.value = "";
-                }}
-              />
-            </label>
-            {evidencePack ? (
-              <div className="evidence-review">
-                <div className="draft-contract">
-                  <span>{copy("已解析", "Parsed")}: {evidencePack.summary.parsed_files}</span>
-                  <span>{copy("跳过", "Skipped")}: {evidencePack.summary.skipped_files}</span>
-                  <span>{copy("失败", "Failed")}: {evidencePack.summary.failed_files}</span>
-                </div>
-                <div className="evidence-file-list">
-                  {evidencePack.items.map((item) => (
-                    <div className="evidence-file ok" key={item.id}><strong>{item.name}</strong><span>{item.kind}</span></div>
-                  ))}
-                  {[...evidencePack.skipped, ...evidencePack.errors].map((item, index) => (
-                    <div className="evidence-file skipped" key={`${item.name}-${index}`}><strong>{item.name}</strong><span>{item.reason}</span></div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            <div className="result-actions">
-              <button
-                className="btn primary"
-                disabled={!evidencePack || evidencePack.items.length === 0 || evidenceMutation.isPending}
-                onClick={() => {
-                  setEvidenceReviewed(true);
-                  setShowEvidenceModal(false);
-                  setUiNotice({ type: "success", message: copy("证据将在应用方案时交给导演重新解析", "Evidence will be applied when the Director refreshes the plan") });
-                }}
-              >
-                {copy("确认使用", "Use Evidence")}
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  setEvidencePack(null);
-                  setEvidenceReviewed(true);
-                  setShowEvidenceModal(false);
-                  setUiNotice({ type: "success", message: copy("将基于用户描述和模型先验进行模拟", "The simulation will use the prompt and model priors") });
-                }}
-              >
-                {copy("暂不提供", "Continue Without Evidence")}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {showLiveTranscript ? (
-        <div className="modal-backdrop live-transcript-backdrop" role="dialog" aria-modal="true" onClick={() => setShowLiveTranscript(false)}>
-          <div className="modal-card live-transcript-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <h2>{copy("全量实况", "Full Live Scene")}</h2>
-                <span>{copy(`${glimpseRows.length} 条实际互动`, `${glimpseRows.length} actual interactions`)}</span>
-              </div>
-              <button className="btn" onClick={() => setShowLiveTranscript(false)}>{copy("关闭", "Close")}</button>
-            </div>
-            <div className="live-transcript-list">
-              <div className="live-transcript-section-title">{copy("实际互动", "Actual Interactions")}</div>
-              {glimpseRows.length === 0 ? <div className="live-window-empty">{copy("模拟开始后，对白和行动会出现在这里。", "Dialogue and actions will appear here once the simulation starts.")}</div> : null}
-              {glimpseRows.map((row) => (
-                <article className={`live-transcript-entry ${row.event}`} key={`transcript-${row.seq}-${row.speaker}-${row.event}`}>
-                  <header>
-                    <strong>{row.speaker}</strong>
-                    <time>{row.time}</time>
-                  </header>
-                  <div>{row.text}</div>
-                </article>
-              ))}
-              {finalResultText ? (
-                <>
-                  <div className="live-transcript-section-title">{copy("最终演出", "Final Scene")}</div>
-                  <article className="live-transcript-entry final-scene">
-                    <header><strong>{copy("旁白", "Narrator")}</strong></header>
-                    <div>{finalResultText}</div>
-                  </article>
-                </>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {showRunResults ? (
-        <div className="modal-backdrop result-backdrop" role="dialog" aria-modal="true" onClick={() => setShowRunResults(false)}>
-          <div className="modal-card run-result-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <span className="result-kicker">SIMULATION COMPLETE</span>
-                <h2>{copy("模拟结束", "Simulation Complete")}</h2>
-              </div>
-              <button className="btn" onClick={() => setShowRunResults(false)}>{copy("关闭", "Close")}</button>
-            </div>
-            <div className="run-result-output">
-              <strong>{copy("本次结果", "Result")}</strong>
-              <div>{finalResultText || copy("运行已经完成，暂无可展示的最终文本。", "The run completed without a final text output.")}</div>
-            </div>
-            <div className="result-actions">
-              <button className="btn" onClick={() => { setShowRunResults(false); setShowLiveTranscript(true); }}>
-                {copy("查看完整过程", "View Full Scene")}
-              </button>
-              <button
-                className="btn primary"
-                disabled={!runId || reportMutation.isPending}
-                onClick={() => runId && reportMutation.mutate({ run: runId, mode: "briefing" })}
-              >
-                {reportMutation.isPending ? copy("生成中...", "Generating...") : copy("生成正式汇报", "Generate Briefing")}
-              </button>
-              <button
-                className="btn warning"
-                disabled={!runId || reportMutation.isPending}
-                onClick={() => runId && reportMutation.mutate({ run: runId, mode: "narrative" })}
-              >
-                {copy("改写为文学作品", "Create Narrative")}
-              </button>
-            </div>
-            {reportResult ? (
-              <div className="run-result-report">
-                <div className="sidebar-header"><strong>{reportResult.title}</strong><span className="count-chip">{reportResult.mode}</span></div>
-                <div>{reportResult.report_markdown}</div>
-              </div>
-            ) : null}
-            {runId ? <MediaStudio runId={runId} sourceText={reportResult?.report_markdown ?? finalResultText} copy={copy} /> : null}
-          </div>
-        </div>
-      ) : null}
+      <EvidenceOverlay
+        open={showEvidenceModal}
+        pending={evidenceMutation.isPending}
+        evidence={evidencePack}
+        copy={copy}
+        onFile={(file) => evidenceMutation.mutate(file)}
+        onUse={() => {
+          setEvidenceReviewed(true);
+          setShowEvidenceModal(false);
+          setUiNotice({ type: "success", message: copy("证据将在应用方案时交给导演重新解析", "Evidence will be applied when the Director refreshes the plan") });
+        }}
+        onSkip={() => {
+          setEvidencePack(null);
+          setEvidenceReviewed(true);
+          setShowEvidenceModal(false);
+          setUiNotice({ type: "success", message: copy("将基于用户描述和模型先验进行模拟", "The simulation will use the prompt and model priors") });
+        }}
+      />
+      <LiveTranscriptOverlay
+        open={showLiveTranscript}
+        rows={glimpseRows}
+        finalText={finalResultText}
+        copy={copy}
+        onClose={() => setShowLiveTranscript(false)}
+      />
+      <RunResultOverlay
+        open={showRunResults}
+        runId={runId}
+        finalText={finalResultText}
+        report={reportResult}
+        reportPending={reportMutation.isPending}
+        copy={copy}
+        onClose={() => setShowRunResults(false)}
+        onOpenTranscript={() => {
+          setShowRunResults(false);
+          setShowLiveTranscript(true);
+        }}
+        onGenerateReport={(mode) => runId && reportMutation.mutate({ run: runId, mode })}
+      />
 
       <StudioStatusRail
         copy={copy}
@@ -1290,13 +1097,13 @@ export default function App() {
       />
 
       <div className="layout studio-layout">
-        <aside className={`sidebar left studio-drawer studio-drawer-left ${activeStudioPanel === "create" ? "open" : ""}`}>
+        <aside aria-hidden={activeStudioPanel !== "create"} className={`sidebar left studio-drawer studio-drawer-left ${activeStudioPanel === "create" ? "open" : ""}`}>
           <button className="drawer-close" onClick={() => setActiveStudioPanel(null)} aria-label="close-create-panel">
             ×
           </button>
           <div className="sidebar-header">
             <h3>{copy("创建模拟", "Create Simulation")}</h3>
-            <span className="count-chip">{createStep}</span>
+            <span className="count-chip">{createStep === "auto" ? copy("导演", "Director") : createStep === "manual" ? tr("manual") : tr("templates")}</span>
           </div>
           <div className="create-stepper">
             {[
@@ -1641,18 +1448,20 @@ export default function App() {
 
         <main ref={canvasRef} className="canvas studio-canvas">
           <StudioDock
+            activePanel={activeStudioPanel}
             isStarting={runMutation.isPending}
             isRunning={["queued", "pending", "running"].includes(runStatus)}
             isStopping={runStatus === "stopping" || stopMutation.isPending}
             tr={tr}
-            onCreate={() => setActiveStudioPanel("create")}
-            onInspect={() => setActiveStudioPanel("inspect")}
-            onAdvanced={() => setActiveStudioPanel("advanced")}
+            onCreate={() => setActiveStudioPanel((panel) => panel === "create" ? null : "create")}
+            onInspect={() => setActiveStudioPanel((panel) => panel === "inspect" ? null : "inspect")}
+            onAdvanced={() => setActiveStudioPanel((panel) => panel === "advanced" ? null : "advanced")}
             onRun={() => runMutation.mutate()}
             onStop={() => stopMutation.mutate()}
           />
           <ReactFlow
-            nodes={nodes}
+            nodes={canvasNodes}
+            nodeTypes={studioNodeTypes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -1692,12 +1501,14 @@ export default function App() {
               setHoverRoleCard(null);
             }}
             zoomOnScroll={false}
+            minZoom={0.15}
             panOnScroll={false}
             preventScrolling={false}
             fitView
+            fitViewOptions={{ padding: 0.3, maxZoom: 1.25 }}
           >
-            <MiniMap />
-            <Controls />
+            <MiniMap position="top-right" pannable zoomable nodeColor="#d5bb45" maskColor="rgba(17, 17, 13, 0.65)" />
+            <Controls fitViewOptions={{ padding: 0.3, maxZoom: 1.25 }} />
             <Background gap={24} size={1.2} />
           </ReactFlow>
           <section
@@ -1707,13 +1518,14 @@ export default function App() {
             onClick={() => setShowLiveTranscript(true)}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
                 setShowLiveTranscript(true);
               }
             }}
           >
             <div className="live-window-head">
               <span>{tr("liveBroadcast")}</span>
-              <strong>{runStatus}</strong>
+              <strong>{t(`studio.status.${runStatus}`, { defaultValue: runStatus })}</strong>
             </div>
             {runStatus === "succeeded" ? (
               <div className="live-window-complete">
@@ -1745,6 +1557,7 @@ export default function App() {
                 }
               }}
               aria-label="director"
+              aria-expanded={showDirectorBubble}
             >
               <span className="cat-ear cat-ear-left" />
               <span className="cat-ear cat-ear-right" />
@@ -1758,10 +1571,10 @@ export default function App() {
               <span className="cat-label">Director</span>
             </button>
             {showDirectorBubble ? (
-              <div className="director-bubble">
+              <div className={`director-bubble ${directorPosition.x > (canvasRef.current?.clientWidth ?? window.innerWidth) / 2 ? "opens-left" : ""} ${directorPosition.y < 280 ? "opens-down" : ""}`}>
                 <div className="director-bubble-head">
                   <strong>{tr("directorConsole")}</strong>
-                  <button className="btn" onClick={() => setShowDirectorBubble(false)}>
+                  <button className="btn" onClick={() => setShowDirectorBubble(false)} aria-label={copy("关闭", "Close")}>
                     ×
                   </button>
                 </div>
@@ -1823,6 +1636,7 @@ export default function App() {
         </main>
 
         <aside
+          aria-hidden={activeStudioPanel !== "inspect" && activeStudioPanel !== "advanced"}
           className={`sidebar right studio-drawer studio-drawer-right ${activeStudioPanel === "inspect" || activeStudioPanel === "advanced" ? "open" : ""} ${
             activeStudioPanel === "advanced" ? "advanced-open" : "inspect-open"
           }`}
@@ -2212,11 +2026,11 @@ export default function App() {
             <div className="monitor-feed">
               {memories.length === 0 ? <div className="empty-hint">{tr("noMemory")}</div> : null}
               {memories.map((m) => (
-                <div key={m.id} className={`monitor-item ${m.kind === "state" ? "warn" : m.kind === "character" ? "info" : "success"}`}>
+                <div key={m.id} className={`monitor-item ${m.kind === "character" ? "info" : "success"}`}>
                   <div className="monitor-top">
                     <span className="monitor-seq">#{m.id}</span>
                     <span className="monitor-node">{m.subject || m.role || m.node_id}</span>
-                    <span className={`monitor-level ${m.kind === "state" ? "warn" : m.kind === "fact" ? "success" : "info"}`}>{m.kind}</span>
+                    <span className={`monitor-level ${m.kind === "fact" ? "success" : "info"}`}>{m.kind}</span>
                   </div>
                   <div className="monitor-msg">{m.content}</div>
                   <small>
@@ -2294,10 +2108,7 @@ export default function App() {
               <span>{copy("空间", "Space")}: {simulationView.worldState.current_location || simulationView.worldState.spatial_scope || "-"}</span>
             </div>
             <div className="metrics-grid">
-                  <MetricCard label={copy("进度", "Progress")} value={formatRatio(simulationView.variables.progress)} />
-                  <MetricCard label={copy("置信度", "Confidence")} value={formatRatio(simulationView.variables.confidence)} />
-                  <MetricCard label={copy("风险", "Risk")} value={formatRatio(simulationView.variables.risk)} />
-                  <MetricCard label={copy("对齐度", "Alignment")} value={formatRatio(simulationView.variables.alignment)} />
+                  <MetricCard label={copy("进度", "Progress")} value={formatRatio(simulationView.runtimeMetrics.progress)} />
             </div>
             {simulationView.dynamicState.enabled ? (
               <div className="dynamic-state-panel">
@@ -2314,13 +2125,7 @@ export default function App() {
                 ))}
                 {simulationView.dynamicState.concepts.length === 0 ? <div className="empty-hint">{copy("等待状态形成", "Awaiting state")}</div> : null}
               </div>
-            ) : (
-              <div className="metric-inline">
-                <span>Task: {simulationView.stateMemory.task_state}</span>
-                <span>Collab: {simulationView.stateMemory.collaboration_state}</span>
-                <span>Relation: {simulationView.stateMemory.relationship_state}</span>
-              </div>
-            )}
+            ) : null}
             <div className="relationship-map">
               {relationshipRows.length === 0 ? <div className="empty-hint">{tr("relationshipMapEmpty")}</div> : null}
               {relationshipRows.slice(0, 10).map((row) => (

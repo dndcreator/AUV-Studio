@@ -124,7 +124,6 @@ def _build_query(
         "time": environment.time_context,
         "space": environment.spatial_context,
         "phase": _current_phase(state),
-        "shared_context": state.get("shared_context", "") if isinstance(state, dict) else "",
         "world_state": state.get("world_state", {}) if isinstance(state, dict) else {},
         "recent_actions": recent_actions[-8:],
     }

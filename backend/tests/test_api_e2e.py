@@ -342,6 +342,7 @@ def test_e2e_failed_then_retry_from_node(monkeypatch) -> None:  # type: ignore[n
         detail_2 = client.get(f"/api/runs/{retry_run_id}")
         assert detail_2.status_code == 200
         assert detail_2.json()["status"] == "succeeded"
+        assert detail_2.json()["input"]["task"] == "retry-case"
     finally:
         try:
             next(gen)
@@ -383,3 +384,27 @@ def test_e2e_platform_catalog_and_health_endpoints(monkeypatch) -> None:  # type
             next(gen)
         except StopIteration:
             pass
+
+
+def test_report_budget_is_returned_as_http_error_without_calling_writer(monkeypatch) -> None:
+    from dataclasses import replace
+    from app.config import settings
+
+    gen = _client_and_db(monkeypatch)
+    client, db_local, queue = next(gen)
+    try:
+        assert client.post("/api/workflows", json=_make_workflow("report_budget")).status_code == 200
+        first = client.post("/api/workflows/report_budget/run", json={"input": {"task": "material"}})
+        run_id = first.json()["run_id"]
+        _drain_one_task(queue, db_local)
+        monkeypatch.setattr("app.service.settings", replace(settings, report_source_max_chars=1))
+
+        async def no_model_call(**_kwargs):
+            raise AssertionError("oversized reports must not call a model")
+
+        monkeypatch.setattr("app.main.provider.chat", no_model_call)
+        response = client.post(f"/api/runs/{run_id}/report", json={"mode": "narrative"})
+        assert response.status_code == 413
+        assert "No model request was sent" in response.json()["detail"]
+    finally:
+        gen.close()

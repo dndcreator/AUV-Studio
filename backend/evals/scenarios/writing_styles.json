@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "title": "Fixed writing benchmark: novel and screenplay",
+  "estimated_calls": 0,
+  "styles": ["novel", "screenplay"],
+  "writing_source": "人物：林夏，27岁；周远，28岁。两人是旧友，一年前林夏向周远借了一本书。傍晚小雨，两人在仍营业的书店门口雨棚下碰面。实际发生的事：林夏从帆布包中取出那本旧书，双手递向周远，说：‘书，还你。比借的时候旧了点。’周远伸手接过，掂了掂，说：‘是旧了点，不过看着还行。’他翻开半页又合上，说：‘谢谢你特意跑一趟。’最终事实：书已归还，周远已回应。没有告白、争吵或其他新事件。可以补充不改变事实的表达细节，但不要续写后续剧情。",
+  "workflow": {
+    "id": "eval_writing_styles", "name": "Fixed writing source", "version": 1,
+    "nodes": [], "edges": [], "entry_nodes": [],
+    "environment": {"scenario": "用固定素材比较小说和剧本的表达。"}
+  }
+}

@@ -15,7 +15,7 @@ describe("dynamic state monitoring", () => {
           simulation_state: {
             current_phase_index: 0,
             phases: [{ name: "Discovery" }],
-            variables: { progress: 0.25, confidence: 0.5, risk: 0.2, alignment: 0.7 }
+            runtime_metrics: { progress: 0.25 }
           }
         }
       },
@@ -41,6 +41,7 @@ describe("dynamic state monitoring", () => {
 
     const view = buildSimulationView(events);
     expect(view.dynamicState.enabled).toBe(true);
+    expect(view.runtimeMetrics.progress).toBe(0.25);
     expect(view.dynamicState.concepts[0]).toMatchObject({ id: "unresolved_bias", value: "active", confidence: 0.8 });
     expect(monitorMessage(events[1])).toContain("1 active concepts");
   });
