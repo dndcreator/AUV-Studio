@@ -132,5 +132,7 @@
   "backgroundContent": "Add background, rules, or role knowledge",
   "everyone": "Everyone",
   "selectedRoles": "Selected roles",
-  "noBackground": "No entries"
+  "noBackground": "No entries",
+  "liveSync": "Live",
+  "livePaced": "Paced"
 }

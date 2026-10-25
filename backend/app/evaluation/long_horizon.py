@@ -44,7 +44,7 @@ def build_long_horizon_checkpoints(scenario: dict[str, Any]) -> list[dict[str, A
         active_nodes = [str(value) for value in step.get("active_nodes", [node_ids[(turn - 1) % len(node_ids)]]) if str(value) in nodes]
         if not active_nodes:
             active_nodes = [node_ids[(turn - 1) % len(node_ids)]]
-        action = {"turn": turn, "active_node_ids": active_nodes, "event": event}
+        action = {"round": turn, "action_index": turn, "node_id": active_nodes[0], "action": event}
         recent_actions.append(action)
 
         for raw in step.get("writes", []):

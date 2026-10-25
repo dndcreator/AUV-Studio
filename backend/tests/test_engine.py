@@ -723,7 +723,8 @@ def test_history_memory_written_and_injected_without_duplicate_state_layer() -> 
     injected = bob_input.get("_memory", [])
     assert isinstance(injected, list)
     assert "Facts:" in provider.user_prompt
-    assert "Character State:" in provider.user_prompt
+    assert "Character State:" not in provider.user_prompt
+    assert all(item.get("kind") != "character" or item.get("node_id") == "bob" for item in injected)
 
 
 def test_memory_write_trigger_filters_trivial_facts() -> None:

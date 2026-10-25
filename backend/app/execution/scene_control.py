@@ -59,7 +59,9 @@ def scene_audit_instruction(
     pending = [item for item in recent_actions if int(item.get("round", 0)) >= first_round]
     return (
         "Audit the boundary of this distributed process episode. Nodes own decisions and actions; do not "
-        "invent their actions, conclusions, plot, or research findings. Decide whether the current episode "
+        "invent their actions, conclusions, plot, or research findings. Private intent, observation and self_update "
+        "are audit-only knowledge: do not disclose them in shared guidance, contracts or summaries unless the actor "
+        "has publicly revealed them through observable action. Decide whether the current episode "
         "should continue, transition to a new macro episode, or stop. This applies to simulation, research, "
         "collaboration, and roleplay. Return JSON only: "
         '{"decision":"continue|transition|stop","guidance":"short boundary constraint only",'

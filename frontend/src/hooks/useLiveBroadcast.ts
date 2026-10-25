@@ -4,6 +4,7 @@ import { buildGlimpseRows, type GlimpseRow } from "../glimpse";
 import { toBroadcastLine } from "../appSupport";
 import type { Lang, UiMode } from "../appTypes";
 import type { RunEvent } from "../types";
+import { broadcastDelay, type LivePlaybackMode } from "../livePlayback";
 
 type BroadcastTone = "news" | "warroom" | "calm";
 
@@ -13,10 +14,13 @@ export function useLiveBroadcast(
   lang: Lang,
   mode: UiMode,
   tone: BroadcastTone,
+  playback: LivePlaybackMode = "sync",
 ) {
   const [snapshot, setSnapshot] = useState<GlimpseRow[]>([]);
   const cursorRef = useRef(0);
   const rowsRef = useRef<GlimpseRow[]>([]);
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
 
   const rows = useMemo(() => {
     const labels = new Map(
@@ -53,17 +57,29 @@ export function useLiveBroadcast(
       setSnapshot([]);
     }
     rowsRef.current = rows;
-  }, [rows]);
+    if (playback === "sync") {
+      cursorRef.current = rows.length;
+      setSnapshot(rows.slice(-30));
+    }
+  }, [rows, playback]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
+    if (playback !== "paced") return;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
       const next = rowsRef.current[cursorRef.current];
-      if (!next) return;
-      cursorRef.current += 1;
-      setSnapshot((previous) => [...previous, next].slice(-30));
-    }, 6000);
-    return () => window.clearInterval(timer);
-  }, []);
+      if (next) {
+        cursorRef.current += 1;
+        setSnapshot((previous) => [...previous, next].slice(-30));
+      }
+      schedule();
+    };
+    const schedule = () => {
+      timer = setTimeout(tick, broadcastDelay(eventsRef.current, rowsRef.current.length - cursorRef.current));
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, [playback]);
 
   return { rows, snapshot, current, broadcastRows, reset };
 }

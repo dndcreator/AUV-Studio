@@ -199,8 +199,9 @@ def select_memories_for_node(
             scope in {"global", "environment"}
             or node_id == node.id
             or include_peer_facts and kind == "fact" and (importance >= 0.5 or score >= 0.8)
-            or kind == "character" and score >= 0.8
         )
+        if kind == "character":
+            relevant = node_id == node.id
         if relevant:
             scored.append((score, item))
     scored.sort(key=lambda pair: (pair[0], int(pair[1].get("id", 0) or 0)))

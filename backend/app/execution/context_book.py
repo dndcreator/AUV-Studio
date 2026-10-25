@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from ..schemas import BackgroundEntry, EnvironmentSpec, WorkflowNode
+from .perception import public_action
 
 
 _ASCII_TERM = re.compile(r"[a-z0-9][a-z0-9_-]{1,}", re.IGNORECASE)
@@ -125,7 +126,7 @@ def _build_query(
         "space": environment.spatial_context,
         "phase": _current_phase(state),
         "world_state": state.get("world_state", {}) if isinstance(state, dict) else {},
-        "recent_actions": recent_actions[-8:],
+        "recent_actions": [public_action(action) for action in recent_actions[-8:]],
     }
     return json.dumps(payload, ensure_ascii=False, default=str).casefold()
 

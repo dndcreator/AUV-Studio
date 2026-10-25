@@ -3,6 +3,17 @@
 本文件用于持续记录 AUV 的产品能力、接口、前端入口和重要实现决策，避免后续遗忘上下文。
 
 ## [Unreleased]
+### Directed Perception And Live Synchronization (2026-10-25 19:00 +08:00)
+
+- Confirmed that continuous turns ignored Canvas edges, copied private intent/observation fields to peers, recalled other characters' memories by relevance, and paced Live with a fixed six-second queue. Kept within-run execution serial; cross-run worker concurrency is not Agent parallelism.
+- Added a decoupled `execution/perception.py` with explicit public-field projection, directed action visibility, edge-formatted inbox messages and a restricted template/runtime context. No entity-to-entity edges means a shared public scene; any such edges switches participant-message delivery to directed links. Global authoritative facts remain shared; a link does not grant private knowledge or require obedience.
+- Continuous graphs now permit bidirectional communication cycles while DAG execution still rejects cycles. Semantic routing receives connections but does not dictate actions. Edge mode/relation/template/intensity, edge ID and source event sequence accompany delivered public messages; conditions read an explicit boolean result. Continuous `required` is not a new scheduling barrier.
+- Reserved intent, observation, self_update, Turn Delta and shared-effect claims for their owner and trusted boundary auditing, not peer action history. Applied the same filtered context to templates, built-in nodes and external Agent requests; private knowledge is not used as a shared World Book activation trigger. Character memory recall now requires node ownership rather than high relevance or matching names.
+- Added Director/router prompt constraints against disclosing private knowledge through shared guidance/contracts. Kept complete owner/audit records and checkpoint data in existing storage rather than adding another state/timeline. Field projection is deterministic, but model-authored action text or semantic paraphrases still require model discipline; this is not a claim of perfect information-flow security.
+- Live defaults to latest-event synchronization and offers a bilingual Live/Paced toggle without feature-explanation copy. Paced playback adapts to event timing and backlog; full transcript/replay data is unchanged. Playback controls are independent from opening the transcript, preserving the yellow-TV styling.
+- Tests exposed an old expectation that Bob should receive Alice's character history, and a long-horizon evaluator using a non-production `event` action envelope. Corrected the privacy expectation and migrated the evaluator to the production `action` envelope; did not lower evaluation thresholds.
+- Verified 187 backend tests, 59 frontend tests, the production build, Python compilation and whitespace checks. New offline cases exercise real continuous loops, two-way links, unconnected recipients, conditional delivery, template isolation, owner recall, actual external HTTP request envelopes, background trigger isolation, adaptive cadence and bilingual playback controls. No paid model calls. Independent Agent parallelism, live provider quality and new browser screenshots were not tested or claimed.
+
 ### Interrupted Runs And Complete Report Sources (2026-10-22 19:47 +08:00)
 
 - Found two remaining correctness gaps: unclean exits left active runs permanently pending/running, while report generation silently discarded everything after the first 16,000 characters. Retry also discarded the user's original input.

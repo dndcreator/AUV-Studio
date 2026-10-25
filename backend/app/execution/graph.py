@@ -28,7 +28,8 @@ def validate_workflow(workflow: WorkflowDefinition) -> None:
     dynamic_enabled = not isinstance(dynamic_config, dict) or bool(dynamic_config.get("enabled", True))
     if continuous and dynamic_enabled and not any(node.type == "director" for node in workflow.nodes):
         raise WorkflowValidationError("continuous dynamic state requires a Director node")
-    topological_sort(workflow.nodes, workflow.edges)
+    if not continuous:
+        topological_sort(workflow.nodes, workflow.edges)
 
 
 def topological_sort(nodes: list[WorkflowNode], edges: list[WorkflowEdge]) -> list[str]:

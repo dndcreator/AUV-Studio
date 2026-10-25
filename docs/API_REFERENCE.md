@@ -1,6 +1,6 @@
 ﻿# API 参考
 
-最后更新：2026-10-22
+最后更新：2026-10-25
 
 基地址：`http://localhost:8000/api`
 
@@ -82,6 +82,10 @@
   - 环境变量密钥：`AUV_IMAGE_API_KEY`、`AUV_VIDEO_API_KEY`
 - `GET /node-specs` 节点规格
 - `GET /interaction-modes` 互动模式
+
+连续执行沿用 Workflow JSON 的 `edges/interaction`，无需新增 API。实体间无边时共享公开场景，有边时按 source -> target 传递公开行动；双向交流需要反向边，连续模式允许通信环，DAG 仍拒绝环。节点运行输入的 `context.recent_actions` 是该节点的可见投影，`context.interactions` 和 `_interactions` 带互动规则、`edge_id`、源 `event_seq`，不包含其他节点私有认知。全局 Dynamic State 仍是共享的权威事实，不受消息连线隐藏。
+
+运行详情、Full Log、Trace 继续保留本地用户可查看的完整审计证据，它们不是给 Agent 的上下文 API。前端实时/演播选项只改变展示节奏，不改事件查询、回放或运行协议。
 - `GET /mode-contracts` 模式与子场景契约定义
 - `GET /director/capabilities` 导演能力清单
 - `GET /protocols/text-agent-v1` 外接协议声明

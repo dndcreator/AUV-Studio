@@ -15,6 +15,8 @@ import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api } from "./api";
 import { useLiveBroadcast } from "./hooks/useLiveBroadcast";
+import { LiveControls } from "./components/LiveControls";
+import type { LivePlaybackMode } from "./livePlayback";
 import { mergeRunEvents, useRunPolling } from "./hooks/useRunPolling";
 import { Topbar } from "./components/Topbar";
 import { StudioDock } from "./components/StudioDock";
@@ -188,6 +190,7 @@ export default function App() {
   const [newRoleBoundaries, setNewRoleBoundaries] = useState("");
   const [roleplayNegativePrompts, setRoleplayNegativePrompts] = useState("");
   const [broadcastTone] = useState<"news" | "warroom" | "calm">("news");
+  const [livePlayback, setLivePlayback] = useState<LivePlaybackMode>("sync");
   const [decisionAction, setDecisionAction] = useState<"continue" | "adjust_direction" | "reduce_cost" | "inject_event">("continue");
   const [hoverRoleCard, setHoverRoleCard] = useState<{
     nodeId: string;
@@ -246,7 +249,7 @@ export default function App() {
     current: currentGlimpse,
     broadcastRows,
     reset: resetLiveBroadcast,
-  } = useLiveBroadcast(visibleEvents, nodes, lang, uiMode, broadcastTone);
+  } = useLiveBroadcast(visibleEvents, nodes, lang, uiMode, broadcastTone, livePlayback);
   const finalResultText = useMemo(() => {
     const completed = [...events]
       .reverse()
@@ -1513,20 +1516,11 @@ export default function App() {
           </ReactFlow>
           <section
             className="canvas-live-window"
-            role="button"
-            tabIndex={0}
+            role="region"
+            aria-label={tr("liveBroadcast")}
             onClick={() => setShowLiveTranscript(true)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                setShowLiveTranscript(true);
-              }
-            }}
           >
-            <div className="live-window-head">
-              <span>{tr("liveBroadcast")}</span>
-              <strong>{t(`studio.status.${runStatus}`, { defaultValue: runStatus })}</strong>
-            </div>
+            <LiveControls mode={livePlayback} status={runStatus} onChange={setLivePlayback} onOpen={() => setShowLiveTranscript(true)} />
             {runStatus === "succeeded" ? (
               <div className="live-window-complete">
                 <strong>{copy("模拟结束", "Simulation Complete")}</strong>

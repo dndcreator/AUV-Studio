@@ -1,6 +1,6 @@
 ﻿# 节点与编排语义
 
-最后更新：2026-04-09
+最后更新：2026-10-25
 
 ## 1. 节点类型
 
@@ -43,7 +43,7 @@
 - `mode`: report | instruction | feedback | dialogue | handoff
 - `relation`: 角色关系（如 leader/member）
 - `template`: 消息模板（可选）
-- `required`: 是否要求上游输出存在
+- `required`: DAG 路径是否要求上游输出存在；连续模拟不把它解释为硬调度屏障
 - `intensity`: 互动强度
 
 ## 3. 运行语义
@@ -53,6 +53,8 @@
 3. 节点失败默认中断 run
 4. 支持从失败节点重试
 5. human_checkpoint 触发 `waiting_human`，人工回复后恢复执行
+
+以上拓扑语义用于 DAG。连续模式通过语义路由激活节点并串行行动，允许双向通信环；有实体间连线时仅按有向边传递公开行动和互动规则，没有实体间连线则共享公开场景。连线不传递私有认知，不等同于强制服从，亦不隐藏权威全局事实。
 
 ## 4. 轻量记忆机制
 
@@ -69,7 +71,7 @@
 2. `fact` 写入条件：存在互动、重大决策/冲突/结论信号，或重要性达到阈值
 3. `character` 写入条件：角色节点发生互动，或输出体现足够重要的角色变化
 4. 召回触发：节点执行前按 subject、scope、kind、importance 和 source event 计算相关性
-5. 召回优先级：global/environment > 当前角色自身 > 高重要性 fact > 相关 character
+5. 事实召回结合 scope、相关性和重要性；`character` 只允许所属节点召回，不能因同名、高重要性或 global scope 被别的节点召回
 6. Memory 契约只接受 `fact` 与 `character`；当前状态统一从 Dynamic State 读取
 
 ## 6. 导演质量纠偏
@@ -83,6 +85,10 @@
 7. `research` 模式强调假设、证据、不确定性和决策含义
 
 ## 7. 连续模拟的场景契约与回合变化
+
+- `action` 表示可被他人观察的言语、行为或发布成果，未说出口的计划和内心描写写入私有认知字段。
+- `intent/observation/self_update/turn_delta/shared_effect_claim` 只给本人及可信审计端。公开行动不包含这些字段，效果声明也不会因为连线转发而直接成为权威事实。
+- 最近行动与 inbox 在节点读取前按连线投影，`_interactions` 包含边规则、`edge_id` 和源 `event_seq`。模板引用和外接 Agent 输入遵循相同边界。
 
 - `context.scene_contract` 包含 `goal`、`pacing` (`slow|steady|fast`)、`detail` (`low|medium|high`)、`progress_scale` (`micro|meso|macro`) 和自然语言 `exit_conditions`。
 - Entity 自主产生 `participation`、可读 `action`、可为空的 `turn_delta`、`intent`、`observation`、`self_update`、`shared_effect_claim` 与 `episode_signal`。等待回合允许空行动，不将协议 JSON 作为正文展示。

@@ -132,5 +132,7 @@
   "backgroundContent": "输入背景、规则或角色知道的信息",
   "everyone": "所有角色",
   "selectedRoles": "指定角色",
-  "noBackground": "暂无设定"
+  "noBackground": "暂无设定",
+  "liveSync": "实时",
+  "livePaced": "演播"
 }

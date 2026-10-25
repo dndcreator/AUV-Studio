@@ -14,6 +14,7 @@ from ..models import NodeRunRecord, RunRecord
 from ..schemas import RunRequest, WorkflowDefinition, WorkflowEdge, WorkflowNode
 from .nodes import HumanInterventionRequired, execute_node, resolve_inputs
 from .provider import OpenAICompatibleProvider
+from .perception import actions_for_node, incoming_interactions, participant_context, public_action
 from .context_book import activation_trace, build_scene_context_pack, context_for_node, environment_for_runtime
 from .dynamic_state import (
     apply_dynamic_state_proposal,
@@ -318,6 +319,8 @@ class WorkflowEngine:
     ) -> str:
         policy = build_loop_policy(workflow)
         entities = [node for node in workflow.nodes if is_entity_node(node)]
+        entity_ids = {node.id for node in entities}
+        communication_edges = [edge for edge in workflow.edges if edge.source in entity_ids and edge.target in entity_ids]
         director = next((node for node in workflow.nodes if node.type == "director"), None)
         summary = next((node for node in workflow.nodes if node.id.startswith("summary_")), None)
         resume = context.pop("_continuous_resume", {})
@@ -367,6 +370,7 @@ class WorkflowEngine:
                     recent_actions=recent_actions,
                     nodes=entities,
                     scene_control=context["_scene_control"],
+                    connections=communication_edges,
                 ),
             )
             activation = parse_activation(
@@ -426,19 +430,26 @@ class WorkflowEngine:
                     else {"episode": context.get("_context_pack", {}).get("episode", 0), "estimated_tokens": 0, "entries": []}
                 )
                 node_simulation_state = simulation_state_for_node(context.get("_simulation", {}), node.id)
+                visible_actions = actions_for_node(recent_actions, node.id, communication_edges)
+                interactions = incoming_interactions(visible_actions, node.id, communication_edges)
+                execution_context = participant_context(
+                    context, state=node_simulation_state, memories=memories, background=node_context_pack,
+                    actions=visible_actions, guidance=guidance,
+                )
                 context_packet = build_context_packet(
                     state=node_simulation_state,
                     memories=memories,
-                    recent_actions=recent_actions,
+                    recent_actions=visible_actions,
                     director_guidance=guidance,
                     background_context=node_context_pack,
                     round_index=round_index,
                     action_index=action_index + 1,
                     scene_contract=context["_scene_control"]["contract"],
                 )
+                context_packet["interactions"] = interactions
                 role_packet = build_role_packet(node, memories)
                 runtime_input = {
-                    **resolve_inputs(node, context),
+                    **resolve_inputs(node, execution_context),
                     "prompt": action_instruction(context_packet, role_packet),
                     "context": context_packet,
                     "role": role_packet,
@@ -447,6 +458,7 @@ class WorkflowEngine:
                     "_memory": memories,
                     "_simulation": node_simulation_state,
                     "_global_guidance": guidance,
+                    "_interactions": interactions,
                 }
                 output, _, success_seq, last_event_hash = await self._execute_continuous_node(
                     db=db,
@@ -458,6 +470,7 @@ class WorkflowEngine:
                     simulation_seq=simulation_seq + 1,
                     last_event_hash=last_event_hash,
                     caused_by="simulation_turn",
+                    execution_context=execution_context,
                 )
                 action_index += 1
                 simulation_seq += 1
@@ -474,7 +487,9 @@ class WorkflowEngine:
                         "turn_delta": output.get("turn_delta", ""),
                         "intent": output.get("intent", ""),
                         "observation": output.get("observation", ""),
+                        "self_update": output.get("self_update", ""),
                         "shared_effect_claim": output.get("shared_effect_claim", ""),
+                        **({"result": output["result"]} if isinstance(output.get("result"), bool) else {}),
                     }
                 )
                 if str(output.get("episode_signal") or output.get("boundary_signal", "none")) == "ready":
@@ -661,7 +676,7 @@ class WorkflowEngine:
                     "that did not occur. Preserve the requested output format and language. Lead with the final established "
                     "outcome; distinguish earlier intermediate states from the situation at the end. Do not retell every "
                     "beat unless the requested form needs it, or pad the summary with new unresolved hooks.\n"
-                    f"{json.dumps(recent_actions, ensure_ascii=False, default=str)}"
+                    f"{json.dumps([public_action(action) for action in recent_actions], ensure_ascii=False, default=str)}"
                 ),
                 "_environment": context.get("_runtime_environment", {}),
                 "_context_pack": context.get("_context_pack", {}),
@@ -703,6 +718,7 @@ class WorkflowEngine:
         simulation_seq: int,
         last_event_hash: str,
         caused_by: str,
+        execution_context: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], int, int, str]:
         node_run = NodeRunRecord(
             run_id=run_id,
@@ -737,7 +753,7 @@ class WorkflowEngine:
         )
         start = perf_counter()
         try:
-            output = await execute_node(node=node, node_input=runtime_input, context=context, provider=self.provider)
+            output = await execute_node(node=node, node_input=runtime_input, context=execution_context if execution_context is not None else context, provider=self.provider)
         except Exception as exc:
             duration = int((perf_counter() - start) * 1000)
             error = {"message": str(exc), "node_id": node.id}
@@ -832,7 +848,8 @@ class WorkflowEngine:
         db.commit()
 
         node_map = {n.id: n for n in workflow.nodes}
-        topo = topological_sort(workflow.nodes, workflow.edges)
+        topo = ([node.id for node in workflow.nodes] if build_loop_policy(workflow).enabled
+                else topological_sort(workflow.nodes, workflow.edges))
         incoming: dict[str, list[WorkflowEdge]] = defaultdict(list)
         outgoing: dict[str, list[WorkflowEdge]] = defaultdict(list)
         for edge in workflow.edges:

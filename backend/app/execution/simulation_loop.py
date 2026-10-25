@@ -4,10 +4,11 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from ..schemas import WorkflowDefinition, WorkflowNode
+from ..schemas import WorkflowDefinition, WorkflowEdge, WorkflowNode
 from .dynamic_state import compact_dynamic_state
 from .entity_contracts import entity_action_contract
 from .scene_control import scene_setup_instruction
+from .perception import public_action
 
 
 @dataclass(frozen=True)
@@ -97,7 +98,7 @@ def build_shared_state_view(state: dict[str, Any], recent_actions: list[dict[str
         "current_phase": current_phase,
         "world_state": state.get("world_state", {}),
         "dynamic_state": compact_dynamic_state(state.get("dynamic_state", {})),
-        "recent_actions": recent_actions[-8:],
+        "recent_actions": [public_action(action) for action in recent_actions[-8:]],
     }
 
 
@@ -107,17 +108,22 @@ def activation_instruction(
     recent_actions: list[dict[str, Any]],
     nodes: list[WorkflowNode],
     scene_control: dict[str, Any] | None = None,
+    connections: list[WorkflowEdge] | None = None,
 ) -> str:
     scene = scene_control or {}
     return (
         "Select only the nodes that are meaningfully involved in the next step of this distributed process. "
         "Use semantic judgment from the shared state and node definitions. Do not activate every node for fairness, "
-        "and do not invent what any node will decide. This applies equally to simulation, research, collaboration, "
+        "and do not invent what any node will decide. Consider the directed connections when judging reachability; "
+        "activation itself does not deliver messages or make all active nodes share knowledge. Do not expose private "
+        "profile details in shared scene contracts or routing explanations. This applies equally to simulation, research, collaboration, "
         "and roleplay. Return JSON only: "
         '{"active_node_ids":["node_id"],"reason":"brief routing reason"}.\n\n'
         + (scene_setup_instruction() if not scene.get("contract") else "Preserve the established Scene Contract. ")
         + f"\nSCENE CONTRACT:\n{json.dumps(scene.get('contract', {}), ensure_ascii=False)}\n\n"
         + f"SHARED STATE:\n{json.dumps(build_shared_state_view(state, recent_actions), ensure_ascii=False, default=str)}\n\n"
+        + "CONNECTIONS (directed delivery; no entity edges means a shared public scene; never grant private knowledge):\n"
+        + json.dumps([edge.model_dump() for edge in connections or []], ensure_ascii=False) + "\n\n"
         f"AVAILABLE NODES:\n{json.dumps(build_node_descriptors(nodes), ensure_ascii=False, default=str)}"
     )
 
@@ -180,11 +186,13 @@ def action_instruction(context_packet: dict[str, Any], role_packet: dict[str, An
         "in ROLE before any optional custom behavior rule. Produce an in-world action or response, never a paraphrase of this "
         "instruction or the requested task. Keep one turn focused on one "
         "concrete contribution, and prioritize syntactically complete JSON over extra length. Return JSON only with: "
-        "participation (act|observe|wait), action (readable contribution produced only by you), intent (your immediate aim), "
+        "participation (act|observe|wait), action (only your externally observable words, behavior or published work; "
+        "put unspoken plans and inner thoughts in private fields, not action), intent (your private immediate aim), "
         "turn_delta (brief change claim, or empty if nothing changed), "
         "observation (what you personally observed or inferred, with uncertainty), self_update (your own continuing state), "
         "shared_effect_claim (a claim about effects on the shared situation, not automatically accepted as fact), and "
-        "episode_signal (continue|ready).\n\n"
+        "episode_signal (continue|ready). Incoming interactions describe delivered messages, not compulsory decisions. "
+        "A connection never grants access to another participant's unspoken intentions or private observations.\n\n"
         f"CONTEXT:\n{json.dumps(context_packet, ensure_ascii=False, default=str)}\n\n"
         f"ROLE:\n{json.dumps(role_packet, ensure_ascii=False, default=str)}"
     )
@@ -233,6 +241,7 @@ def normalize_action_output(output: dict[str, Any], *, round_index: int, action_
         "boundary_signal": "ready" if episode_signal == "ready" else "none",
         "round": round_index,
         "action_index": action_index,
+        **({"result": parsed["result"]} if isinstance(parsed.get("result"), bool) else {}),
     }
 
 

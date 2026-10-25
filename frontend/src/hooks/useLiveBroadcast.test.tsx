@@ -29,7 +29,7 @@ describe("useLiveBroadcast", () => {
 
   it("paces readable events and resets the broadcast cursor", () => {
     const { result, rerender } = renderHook(
-      ({ runEvents }: { runEvents: RunEvent[] }) => useLiveBroadcast(runEvents, nodes, "zh-CN", "research", "news"),
+      ({ runEvents }: { runEvents: RunEvent[] }) => useLiveBroadcast(runEvents, nodes, "zh-CN", "research", "news", "paced"),
       { initialProps: { runEvents: events } },
     );
 
@@ -67,5 +67,26 @@ describe("useLiveBroadcast", () => {
     rerender({ rows: [] });
     expect(result.current.snapshot).toEqual([]);
     expect(result.current.current).toBeNull();
+  });
+
+  it("shows the newest event immediately in sync mode without changing the full transcript", () => {
+    const backlog = Array.from({ length: 50 }, (_, index) => ({ ...events[0], seq: index + 1,
+      payload: { output: { content: `Public action ${index + 1}` } } }));
+    const { result } = renderHook(() => useLiveBroadcast(backlog, nodes, "en-US", "research", "news"));
+    expect(result.current.current?.seq).toBe(50);
+    expect(result.current.rows).toHaveLength(50);
+    expect(result.current.snapshot).toHaveLength(30);
+  });
+
+  it("switches paced playback to live without replaying an old backlog", () => {
+    const backlog = events.concat({ ...events[0], seq: 2, payload: { output: { content: "Latest action" } } });
+    const { result, rerender } = renderHook(({ mode }: { mode: "sync" | "paced" }) =>
+      useLiveBroadcast(backlog, nodes, "en-US", "research", "news", mode), { initialProps: { mode: "paced" } });
+    expect(result.current.current).toBeNull();
+    rerender({ mode: "sync" });
+    expect(result.current.current?.seq).toBe(2);
+    rerender({ mode: "paced" });
+    act(() => vi.advanceTimersByTime(20_000));
+    expect(result.current.current?.seq).toBe(2);
   });
 });

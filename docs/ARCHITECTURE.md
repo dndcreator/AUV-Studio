@@ -1,6 +1,6 @@
 ﻿# 系统架构说明
 
-最后更新：2026-10-22
+最后更新：2026-10-25
 
 ## 1. 总体架构
 
@@ -42,6 +42,7 @@
 - `media_service.py`：视觉提示词规划、图片/视频 Provider 调用、异步任务刷新和媒体资产读取。
 - `execution/engine.py`：执行循环、节点调度和跨领域编排，不承载图规则、事件存储、快照格式、Director 纯策略或记忆策略。
 - `execution/graph.py`：DAG 校验、拓扑排序、条件路由、后代范围和边互动消息。
+- `execution/perception.py`：连续模拟的公开行动投影、有向消息可见性、连线 inbox 和节点专属模板/运行上下文；不存储第二份状态或事件。
 - `execution/memory.py`：`fact|character` 记忆的持久化、回滚裁剪、召回评分、节点筛选和 Director 干预读取。
 - `execution/events.py`：运行事件脱敏、审计哈希链写入、历史节点输出恢复和人工恢复事件。
 - `run_lifecycle.py`：中断状态与审计事件的原子持久化，供队列异常/停机和启动恢复共同调用；不重新执行任务，也不改动模拟领域状态。
@@ -55,12 +56,13 @@
 - 前端模型元数据、配置弹窗、项目库和运行覆盖层均为独立模块；`App.tsx` 负责组合、画布和跨模块状态协调。
 - `components/RunOverlays.tsx`：证据、全量实况和运行结果覆盖层，保持展示与运行控制解耦。
 - `hooks/useLiveBroadcast.ts`：Live 可读事件映射、播放游标、广播快照和播报队列。
+- `livePlayback.ts`：按事件间隔及积压计算有界演播节奏；`components/LiveControls.tsx` 提供双语实时/演播切换。默认同步最新事件，演播只影响展示，不影响运行调度或完整时间线。
 - `hooks/useRunPolling.ts`：按运行隔离请求、15 秒超时/取消、串行轮询、事件游标和去重；每轮最多读取五页、每页 500 条。只有补齐尾部事件才发布终态；指标/检查点通常间隔至少 5 秒读取，终态额外刷新。可选遥测失败不丢弃已读取的事件。
 - `components/StudioIcon.tsx`：工作室操作图标；`styles/studio.css`：工作室外观与响应式布局。样式按 React Flow、共享样式、工作室样式的顺序加载，实体预设通过 CSS 变量控制外观。
 
 ### 执行层依赖方向
 
-`engine -> graph | events | checkpoints | memory | director_policy | scene_control | simulation_loop | simulation_state | nodes`
+`engine -> graph | perception | events | checkpoints | memory | director_policy | scene_control | simulation_loop | simulation_state | nodes`
 
 领域模块不得反向导入 `engine`；数据库与 Provider 同时参与的流程编排保留在 `engine`，纯转换和单一持久化职责下沉到对应模块。
 
@@ -166,3 +168,13 @@ AUV continuous execution is mode-neutral. Roleplay scenes, research stages, cons
 The engine hard-codes only the protocol envelope. Relevance, proposals, semantic state summaries, and phase meaning remain model-decided; there are no roleplay keyword tables or domain-specific routing rules.
 
 Scene setup is returned in the initial existing routing call, and progress checks share the existing Director/State Coder audit call. There is no extra per-turn judge call. Contracts stay stable within a scene; Director may tune pacing/detail/scale, and a transition can replace the goal and exits. Fine detail is selective rather than a checklist, action limits are ceilings rather than quotas, and output quality does not reward word count.
+
+### 连线、感知与执行顺序
+
+- 无实体间连线：共享公开场景。存在实体间连线：只沿 source -> target 传递行动；反向通信需要反向连线，连续模拟允许环，DAG 仍禁止环。Director/summary 的边不触发实体消息网络模式。
+- 连续回合的 inbox 使用现有边规则渲染消息，带 `edge_id/event_seq`；`condition` 根据行动显式返回的布尔 `result` 筛选。`required` 不作为连续循环的硬依赖屏障，严格任务依赖仍由 DAG 路径承担。
+- 连线控制节点行动/消息的直接可见范围，不隐藏已被审计接受的全局 Dynamic State。路由器选择激活节点不等于让它们自动知道彼此行动；Agent 仍可基于自身目标和已知事实独立行动。
+- 公开投影仅允许行动、参与方式、主体及轮次/事件元数据。`intent/observation/self_update/turn_delta/shared_effect_claim` 不转发给其他节点；本人可读取自己的这些记录，Director/State Coder 可读取审计证据。私有状态继续由 Dynamic State owner 过滤；角色历史只召回给所属节点。
+- 连续模式的表达式解析、system/user prompt 模板与外接 Agent 请求都使用同一受限上下文，不能通过引用其他节点的输出绕过投影。共享背景激活查询也不读取私有认知字段。
+- Director 的共享指导和场景契约被提示不得转述未公开的秘密；这层语义约束不能被字段投影证明，模型若把秘密写进公开 `action` 仍可能泄露。面向当前本地单用户，Full Log/Trace 仍是有权查看私有证据的审计视图，不是给所有 Agent 公开的聊天频道。
+- 单次模拟仍逐节点 await，后续节点可见先前已完成且获准投递的本轮行动。队列 Worker 并发的是不同 run。独立节点并行需要另外设计同轮快照、冲突合并及取消语义，本次没有开启。
