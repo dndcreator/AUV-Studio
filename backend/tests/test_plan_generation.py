@@ -156,7 +156,7 @@ def test_natural_language_evaluation_saves_one_compact_result_even_when_compilat
             if "action consistency checker" in system_prompt:
                 return {"content": '{"decision":"accept","reason":"Offline fixture.","scope":{"self_owned":true,"public_only":true},"findings":[]}'}
             if "continuity auditor" in system_prompt:
-                return {"content": '{"decision":"stop","task_complete":true,"completion_reason":"Offline fixture goal reached."}'}
+                return {"content": '{"decision":"stop","task_complete":true,"completion_reason":"Offline fixture goal reached.","state_patch":{"schema_ops":[],"state_ops":[]}}'}
             if "finished literary work" in system_prompt:
                 return {"content": "柜台前，新手握着背包带，问起第一份委托。"}
             if "literary fidelity checker" in system_prompt:

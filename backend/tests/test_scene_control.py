@@ -146,7 +146,7 @@ def test_real_engine_protocol_checks_false_delta_without_extra_calls_and_can_sto
                 content = {"active_node_ids": ["a", "b"], "scene_contract": CONTRACT}
             elif "continuity auditor" in system_prompt:
                 assert "Turn Delta is a participant claim, not proof" in user_prompt
-                content = {"decision": "stop" if self.round == 2 else "continue",
+                content = {"decision": "stop" if self.round == 2 else "continue", "state_patch": {"schema_ops": [], "state_ops": []},
                            "task_complete": self.round == 2, "completion_reason": "The fixture scene is resolved.",
                            "round_progress": [{"round": self.round, "stagnant": True, "reason": "The same action repeats despite claimed novelty."}]}
             else:

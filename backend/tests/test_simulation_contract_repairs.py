@@ -49,7 +49,8 @@ class FixtureProvider:
         elif "continuity auditor" in system_prompt:
             self.audit_prompts.append(user_prompt)
             data = {"decision": self.decision, "task_complete": self.complete,
-                    "completion_reason": "The actors reached a resolution." if self.complete else "The demand remains unanswered."}
+                    "completion_reason": "The actors reached a resolution." if self.complete else "The demand remains unanswered.",
+                    "state_patch": {"schema_ops": [], "state_ops": []}}
         elif "autonomous participant" in system_prompt:
             self.actor_prompts.append(user_prompt)
             data = {"participation": "act", "action": "I offer my own answer.", "intent": "Respond without deciding for anyone else."}

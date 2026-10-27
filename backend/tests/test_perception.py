@@ -115,7 +115,7 @@ def test_real_continuous_runtime_isolates_history_templates_and_owner_recall(con
             if "route attention" in system_prompt:
                 return {"content": '{"active_node_ids":["a","b","c"]}'}
             if "continuity auditor" in system_prompt:
-                return {"content": '{"decision":"continue"}'}
+                return {"content": '{"decision":"continue","state_patch":{"schema_ops":[],"state_ops":[]}}'}
             if '"node_id": "a"' in user_prompt.split("ROLE:\n")[-1]:
                 return {"content": json.dumps({key: value for key, value in sample_action().items() if key != "future_field"})}
             return {"content": '{"participation":"act","action":"A normal public response."}'}
@@ -188,7 +188,7 @@ def test_external_agent_http_envelope_receives_only_delivered_public_information
             if "route attention" in system_prompt:
                 return {"content": '{"active_node_ids":["a","b"]}'}
             if "continuity auditor" in system_prompt:
-                return {"content": '{"decision":"stop","task_complete":true,"completion_reason":"Offline fixture goal reached."}'}
+                return {"content": '{"decision":"stop","task_complete":true,"completion_reason":"Offline fixture goal reached.","state_patch":{"schema_ops":[],"state_ops":[]}}'}
             return {"content": json.dumps(sample_action())}
 
     monkeypatch.setattr("app.execution.nodes.httpx.AsyncClient", Client)

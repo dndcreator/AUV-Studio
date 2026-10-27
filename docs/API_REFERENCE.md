@@ -211,6 +211,18 @@
 
 值及接纳历史保留准确 source_refs；既有类型、owner/visibility、保留期和回滚规则不变。角色上下文、State Coder 与通用节点提示词保留来源性质，避免把转述渲染为已验证结果。旧值的 confirmed 标签在状态规范化/读取投影中按 recorded 解释，缺失来源类别按 inference 解释，不改写原始历史事件或传入对象，也不引入第二个事实库或独立核实调用。
 
+### State Coder 进度与语义索引
+
+Dynamic State 新增执行层维护的 `last_coded_event_seq`，只引用当前分支实际接纳的行动事件，不是行动数组下标，也不是最近一次任意日志的序号。游标随内部回滚快照保存；缺少此字段时按 0 重新检查既有行动，不能因为行动已在列表中就假定已编码。模型返回同名字段不能控制执行游标。
+
+`state_patch` 必须明确包含数组 `schema_ops/state_ops`；两个空数组表示已检查本批且无需持久化，不同于缺字段、坏 JSON、重复键、非有限数字或 mock/截断回复。运行路径按整批提交：任一操作拒绝时，状态、历史、版本和游标都不接受该批的部分结果。正常提交时，状态与游标在同一个签名检查点事件中落盘；数据库提交失败不提前发布新游标。
+
+`dynamic_state_updated.payload.coding` 为 `{status: coded|pending, attempt: 1|2, last_coded_event_seq, through_event_seq, action_count}`。`changed` 只描述语义状态变化；有效空提案可以 `changed=false` 且进度前进。失败仅允许一次 State Coder 补编码，不重新执行 Agent、外部任务或 Director 的流程决策；再次失败抛出 StateCodingError，运行失败并保留已接纳行动、原状态和待编码检查点。传输与预算异常向上传递，不伪装为空提案，也不自动加预算。
+
+概念 upsert 可选 `subject_id`（非空字符串，最长120字符）和 `predicate`（非空字符串，最长80字符）；缺省不建立该索引。subject 是被描述对象，不等同于私有 owner，可指物体等非 Agent 实体。字段一旦建立不可改指其他主体/属性，后续省略则保留；无索引的概念仍可用。内部 `query_dynamic_state(raw, subject_id=..., predicate=..., node_id=...)` 返回精确匹配的 `{concept_id: {schema,current}}`，先按 owner 过滤私有概念；没有新 HTTP 入口、状态数据库或领域枚举。
+
+Checker 的既有证据列表保留 `dynamic.*` 当前记录和 `actor.input` 实际认知，新增 `state.coding` 游标与全部未编码事件 ID；`event.*` 是最近12条与全部待编码公开行动的去重并集。未编码部分不受12条窗口截断，超出既有检查字符限额则明确失败。完整检查视图只给审计模型，角色输入仍按通信和私有状态规则过滤。执行前的确定性校验只核对实际 actor、事件引用/正文、消息通道和状态可见性，不从自由 predicate 或自然语言资源描述推导可执行禁令；合法输入仍经过原语义 Checker。
+
 ### 自动解析的失败协议
 
 `POST /api/templates/compile` 成功响应新增 `generation: {attempts, recovered_errors}`。只在模型给出有效 goal 与具名 roles 后构建工作流；不再因网络、截断或 JSON 错误返回启发式成功草案。

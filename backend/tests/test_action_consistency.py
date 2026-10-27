@@ -156,7 +156,7 @@ def test_real_engine_admits_only_checked_actions_and_keeps_rejected_candidates_o
             if "continuity auditor" in system_prompt:
                 assert "IMPOSSIBLE-CONTACT" not in user_prompt
                 self.audits.append(user_prompt)
-                return {"content": '{"decision":"stop","task_complete":true,"completion_reason":"Offline fixture goal reached."}'}
+                return {"content": '{"decision":"stop","task_complete":true,"completion_reason":"Offline fixture goal reached.","state_patch":{"schema_ops":[],"state_ops":[]}}'}
             self.generated += 1
             if self.generated <= 2:
                 assert "PRIVATE-K7" not in user_prompt

@@ -14,6 +14,16 @@ function event(partial: Partial<RunEvent>): RunEvent {
 }
 
 describe("Live broadcast selection", () => {
+  it("keeps state coding progress and failed patches out of readable broadcasts", () => {
+    const rows = buildGlimpseRows([
+      event({ event: "dynamic_state_updated", node_id: "state_coder", payload: {
+        coding: { status: "pending", attempt: 1, last_coded_event_seq: 0 },
+        rejected: [{ reason: "invalid_patch_shape" }], dynamic_state: { values: { secret: "PRIVATE-CODING" } }
+      } }),
+      event({ seq: 2, payload: { output: { action: "I enter the hall.", content: "I enter the hall." } } })
+    ]);
+    expect(rows.map((row) => row.text)).toEqual(["I enter the hall."]);
+  });
   it("ignores lifecycle noise and emits readable content only", () => {
     const rows = buildGlimpseRows([
       event({ seq: 1, event: "queued" }),

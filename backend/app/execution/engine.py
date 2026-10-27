@@ -20,13 +20,13 @@ from .completion import completion_result, execution_allowance
 from .entity_contracts import entity_detail_instruction
 from .context_book import activation_trace, build_scene_context_pack, context_for_node, environment_for_runtime
 from .dynamic_state import (
-    apply_dynamic_state_proposal,
     compact_dynamic_state,
     dynamic_state_enabled,
     expire_dynamic_state,
     simulation_state_for_node,
     state_coder_audit_clause,
 )
+from .state_coding import encode_state_batch, pending_state_actions, proposal_from_response
 from .checkpoints import (
     build_context_snapshot,
     continuous_snapshot,
@@ -334,7 +334,6 @@ class WorkflowEngine:
         guidance = ""
         director_override_cursor = 0
         activation_cursor = 0
-        state_coder_cursor = len(recent_actions)
         context.setdefault("_scene_control", init_scene_control())
 
         stop_requested = False
@@ -584,7 +583,7 @@ class WorkflowEngine:
             if director is not None and should_audit:
                 simulation_state = context.get("_simulation", {})
                 state_coder_active = isinstance(simulation_state, dict) and dynamic_state_enabled(simulation_state)
-                uncoded_actions = recent_actions[state_coder_cursor:] if state_coder_active else []
+                uncoded_actions = pending_state_actions(simulation_state.get("dynamic_state", {}), recent_actions) if state_coder_active else []
                 state_coder_prompt = state_coder_audit_clause(uncoded_actions, actions_in_audit=True) if uncoded_actions else ""
                 control_prompt = scene_audit_instruction(
                     state=context.get("_simulation", {}),
@@ -598,6 +597,7 @@ class WorkflowEngine:
                                    "role": str(participant.config.get("role", "custom")),
                                    "responsibilities": participant.config.get("responsibilities", [])}
                                   for participant in entities],
+                    uncoded_actions=uncoded_actions,
                 ) + f"\n\n{state_coder_prompt}"
                 response = await self.provider.chat(
                     model="",
@@ -605,6 +605,27 @@ class WorkflowEngine:
                     user_prompt=control_prompt,
                 )
                 control = parse_director_control(str(response.get("content", "")), default_guidance=guidance)
+                if state_coder_active and uncoded_actions:
+                    def record_coding(next_state: dict[str, Any], coder_result: dict[str, Any]) -> None:
+                        nonlocal last_event_hash
+                        next_context = {**context, "_simulation": {**context["_simulation"], "dynamic_state": next_state}}
+                        _, last_event_hash = emit_event(
+                            db, run.id, "state_coder", "dynamic_state_updated",
+                            {"round": round_index, **coder_result, "dynamic_state": compact_dynamic_state(next_state),
+                             "_rollback_snapshot": continuous_snapshot(next_context, recent_actions, round_index, action_index, simulation_seq)},
+                            caused_by="director_state_coder",
+                            context_snapshot={"round": round_index, "version": coder_result["version"],
+                                              "schema_version": coder_result["schema_version"],
+                                              "source_node_ids": list(dict.fromkeys(row["node_id"] for row in uncoded_actions)),
+                                              "coding": coder_result["coding"]}, prev_hash=last_event_hash,
+                        )
+                        # Publish state and cursor together, only after the signed checkpoint was committed.
+                        context["_simulation"] = next_context["_simulation"]
+
+                    await encode_state_batch(provider=self.provider, state=simulation_state,
+                                             proposal=proposal_from_response(response, director_envelope=True),
+                                             actions=uncoded_actions, seq=simulation_seq, round_index=round_index,
+                                             record=record_coding)
                 if control["decision"] == "transition":
                     context["_simulation"]["episode_index"] = int(context["_simulation"].get("episode_index", 0) or 0) + 1
                     phases = context["_simulation"].get("phases", [])
@@ -617,41 +638,6 @@ class WorkflowEngine:
                 if control["guidance"]:
                     guidance = control["guidance"]
                     context["_global_guidance"] = guidance
-                if state_coder_active and uncoded_actions:
-                    source_ids = list(
-                        dict.fromkeys(str(item.get("node_id", "")) for item in uncoded_actions if item.get("node_id"))
-                    )
-                    next_dynamic_state, coder_result = apply_dynamic_state_proposal(
-                        context["_simulation"].get("dynamic_state", {}),
-                        control["state_patch"],
-                        seq=simulation_seq,
-                        source_actions=uncoded_actions,
-                        round_index=round_index,
-                    )
-                    context["_simulation"]["dynamic_state"] = next_dynamic_state
-                    state_coder_cursor = len(recent_actions)
-                    _, last_event_hash = emit_event(
-                        db,
-                        run.id,
-                        "state_coder",
-                        "dynamic_state_updated",
-                        {
-                            "round": round_index,
-                            **coder_result,
-                            "dynamic_state": compact_dynamic_state(next_dynamic_state),
-                            "_rollback_snapshot": continuous_snapshot(
-                                context, recent_actions, round_index, action_index, simulation_seq
-                            ),
-                        },
-                        caused_by="director_state_coder",
-                        context_snapshot={
-                            "round": round_index,
-                            "version": coder_result["version"],
-                            "schema_version": coder_result["schema_version"],
-                            "source_node_ids": source_ids,
-                        },
-                        prev_hash=last_event_hash,
-                    )
                 audit_payload = {key: value for key, value in control.items() if key != "state_patch"}
                 _, last_event_hash = emit_event(
                     db,

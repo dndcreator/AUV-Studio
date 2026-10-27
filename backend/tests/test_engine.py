@@ -911,15 +911,15 @@ def test_continuous_loop_uses_semantic_activation_and_autonomous_node_proposals(
             '{"active_node_ids":["agent_1","agent_2"],"reason":"both are involved"}',
             '{"participation":"act","action":"Lin says hello.","intent":"start a conversation","shared_effect_claim":"Lin greets Chen","self_update":"less hesitant","episode_signal":"continue"}',
             '{"participation":"act","action":"Chen answers.","intent":"engage Lin","shared_effect_claim":"Chen responds","self_update":"curious","episode_signal":"ready"}',
-            '{"decision":"continue","guidance":"Only preserve continuity.","reason":"exchange remains open","shared_state_summary":"Lin and Chen have started talking."}',
+            '{"decision":"continue","guidance":"Only preserve continuity.","reason":"exchange remains open","shared_state_summary":"Lin and Chen have started talking.","state_patch":{"schema_ops":[],"state_ops":[]}}',
             '{"active_node_ids":["agent_1","agent_2"],"reason":"conversation continues"}',
             '{"participation":"act","action":"Lin asks about class.","intent":"learn Chen opinion","shared_effect_claim":"A class topic is opened","self_update":"more confident","episode_signal":"continue"}',
             '{"participation":"act","action":"Chen smiles.","intent":"signal interest","shared_effect_claim":"Chen reacts positively","self_update":"receptive","episode_signal":"ready"}',
-            '{"decision":"transition","guidance":"Carry forward established facts only.","reason":"topic is resolved","shared_state_summary":"They have established mutual interest."}',
+            '{"decision":"transition","guidance":"Carry forward established facts only.","reason":"topic is resolved","shared_state_summary":"They have established mutual interest.","state_patch":{"schema_ops":[],"state_ops":[]}}',
             '{"active_node_ids":["agent_1","agent_2"],"reason":"both decide what follows"}',
             '{"participation":"act","action":"Lin suggests walking home.","intent":"continue together","shared_effect_claim":"Lin proposes leaving together","self_update":"committed","episode_signal":"ready"}',
             '{"participation":"act","action":"Chen agrees.","intent":"accept proposal","shared_effect_claim":"They leave together","self_update":"trust increased","episode_signal":"ready"}',
-            '{"decision":"stop","task_complete":true,"completion_reason":"They leave campus together.","guidance":"","reason":"objective reached","shared_state_summary":"They leave campus together."}',
+            '{"decision":"stop","task_complete":true,"completion_reason":"They leave campus together.","guidance":"","reason":"objective reached","shared_state_summary":"They leave campus together.","state_patch":{"schema_ops":[],"state_ops":[]}}',
             "## Final scene\n\nThey leave campus together.",
         ]
     )

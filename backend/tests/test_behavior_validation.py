@@ -141,11 +141,14 @@ def test_real_engine_24_rounds_keeps_authority_privacy_and_rejects_unsupported_c
                         schemas.append(schema)
                         values.append(state)
                 fake = {"node_id": "nonexistent", "action_index": 9999, "event_seq": 9999}
+                self.clean_patch = {"schema_ops": schemas, "state_ops": values}
                 schema, value = proposal("invented_storm", "UNOBSERVED-STORM", fake)
                 return {"content": json.dumps({"decision": "continue", "guidance": "", "round_progress": [
                     {"round": self.audits, "stagnant": False, "reason": "One concrete proposal"}],
                     "state_patch": {"schema_ops": schemas + [schema], "state_ops": values + [value],
                                     "world_state": {"current_time": "year 9999"}}})}
+            if "State Coder repairing" in system_prompt:
+                return {"content": json.dumps(self.clean_patch)}
             packet, _ = json.JSONDecoder().raw_decode(user_prompt.split("CONTEXT:\n", 1)[1])
             role, _ = json.JSONDecoder().raw_decode(user_prompt.split("ROLE:\n", 1)[1])
             assert role["role"]
@@ -178,8 +181,9 @@ def test_real_engine_24_rounds_keeps_authority_privacy_and_rejects_unsupported_c
             if node_id != "mina":
                 assert "PRIVATE-K7" not in json.dumps(packet)
         changes = db.query(RunEventRecord).filter_by(run_id=run_id, event="dynamic_state_updated").all()
-        assert len(changes) == 24
-        assert all(json.loads(event.payload_json)["rejected"] for event in changes)
+        assert len(changes) == 48
+        assert all(json.loads(event.payload_json)["rejected"] for event in changes[::2])
+        assert all(json.loads(event.payload_json)["coding"]["status"] == "coded" for event in changes[1::2])
         assert verify_run_audit(db, run_id).verified
     database.dispose()
 

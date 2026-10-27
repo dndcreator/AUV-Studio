@@ -11,6 +11,8 @@ from .dynamic_state import compact_dynamic_state
 from .perception import PRIVATE_FIELDS, public_action
 from .simulation_loop import is_entity_node
 from .action_output import ActionOutputError, normalize_action_output
+from .action_boundary import validate_actor_context
+from .state_coding import pending_state_actions
 
 
 CATEGORIES = frozenset({"spacetime", "existence", "capability", "knowledge", "causality", "evidence"})
@@ -38,7 +40,10 @@ CHECK_SYSTEM_PROMPT = (
     "information, not comprehension. Compare the actor's actual input with trusted evidence; other actors' private "
     "information is available ONLY for checking and cannot become this actor's knowledge. Past actions remain "
     "observable actions/claims, not proof of every claimed effect. Respect the kind and uncertainty of background "
-    "beliefs, rumors and assumptions; they are not verified facts. Dialogue may contain lies, mistakes, hypotheticals "
+    "beliefs, rumors and assumptions; they are not verified facts. "
+    "State coding progress explicitly identifies all pending accepted events; read those as the uncoded delta on top "
+    "of committed state, not as independently verified outcomes or information automatically known to the actor. "
+    "Dialogue may contain lies, mistakes, hypotheticals "
     "or proposals without making their contents true. Surprising initiative, betrayal, genre, tone, sexuality and "
     "unconventional behavior are NOT consistency violations. Do not enforce personality conformity or content ratings. "
     "Accept an established exception or a causally supported change; do not invent missing bridges, time machines, "
@@ -63,6 +68,8 @@ def build_consistency_evidence(
     workflow: WorkflowDefinition, state: dict[str, Any], actions: list[dict[str, Any]], runtime_input: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Read existing authorities; this is a checking projection, not another state store."""
+    if runtime_input.get("_participant_turn") is True:
+        validate_actor_context(workflow, state, actions, runtime_input)
     evidence: list[dict[str, Any]] = []
 
     def add(source: str, kind: str, value: Any) -> None:
@@ -90,7 +97,11 @@ def build_consistency_evidence(
         add(f"dynamic.{concept_id}", "state", {"schema": concept, "current": dynamic.get("values", {}).get(concept_id)})
     add("task.contract", "task", state.get("task_contract", {}))
     add("research.evidence", "evidence", state.get("evidence", {}))
-    for action in actions[-12:]:
+    pending = pending_state_actions(state.get("dynamic_state", {}), actions) if dynamic.get("enabled") else []
+    add("state.coding", "coding_progress", {"last_coded_event_seq": dynamic.get("last_coded_event_seq", 0),
+                                           "pending_event_seqs": [row["event_seq"] for row in pending]})
+    selected = {row["event_seq"]: row for row in actions[-12:] + pending}
+    for action in selected.values():
         add(f"event.{action['event_seq']}", "accepted_action", public_action(action))
     packet = runtime_input.get("context", {})
     known_events = {row["id"] for row in evidence}

@@ -206,7 +206,8 @@ def test_eval_executes_isolated_end_to_end_with_fake_provider(monkeypatch) -> No
                 content = '{"active_node_ids":["lin","chen"],"reason":"both own the conflict"}'
             elif "continuity auditor" in system_prompt:
                 content = json.dumps({"decision": "stop" if self.action_index >= 4 else "continue", "task_complete": self.action_index >= 4,
-                                      "completion_reason": "The compromise was verified.", "reason": "Verify the compromise after both responses."})
+                                      "completion_reason": "The compromise was verified.", "reason": "Verify the compromise after both responses.",
+                                      "state_patch": {"schema_ops": [], "state_ops": []}})
             elif "Record only the concrete outcome" in system_prompt:
                 content = "They agree to a limited launch after an assigned verification check."
             else:

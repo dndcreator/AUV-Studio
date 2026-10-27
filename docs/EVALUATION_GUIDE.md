@@ -75,6 +75,10 @@ python -m app.eval_runner --scenario writing_styles --execute --judge --max-call
 
 ## Dynamic State 专项
 
+State Coder 的正常提案仍复用 Director 审计。只在结构或操作校验失败时允许一次补编码，Eval 将它统计为 `usage_by_kind.state_repair`，同样计入原有调用、Token、估算费用和物理重试限制，不自动续预算。缺少 state_patch 不是无更新，测试假模型也必须显式返回两个空数组。待编码增量完整进入 Checker，积压可能增加输入 Token，因此不承诺单次费用保持不变或上下文必然缩短。
+
+普通回归新增编码游标、整批提交、空提案确认、私有索引和回滚恢复断言；其中角色移动/归属/死亡等示例若使用人工编写 Patch 或假 checker，只验证工程数据路径，不证明实际模型能正确抽取移动、判断物品转移授权或识别虚假陈述。真实语义完成率、误拒绝率与 Token 对比仍需用户单独授权的小规模实际测试。本次未执行收费请求，也未重评历史失败样本。
+
 `dynamic_state_quality` 使用一段包含对白、动作和短暂心理细节的固定关系冲突，验证模型是否只保留会约束后续行动的事实。规则评分检查：
 
 - 至少捕获一项持久事实，但活动概念不超过四项。

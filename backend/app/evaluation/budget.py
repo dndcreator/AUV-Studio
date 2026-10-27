@@ -91,7 +91,7 @@ class BudgetedProvider:
     def _record_usage(self, system: str, input_tokens: int, output_tokens: int, *, failed: bool = False) -> None:
         categories = {"action consistency checker": "action_check", "literary fidelity checker": "writing_check",
                       "process architect": "planning", "route attention": "routing", "continuity auditor": "audit",
-                      "autonomous participant": "actor", "finished literary work": "writing"}
+                      "State Coder repairing": "state_repair", "autonomous participant": "actor", "finished literary work": "writing"}
         kind = next((kind for marker, kind in categories.items() if marker in system), "other")
         row = self.usage_by_kind.setdefault(kind, {"calls": 0, "input_tokens": 0, "output_tokens": 0, "failed": 0})
         for key, value in {"calls": 1, "input_tokens": input_tokens, "output_tokens": output_tokens, "failed": int(failed)}.items():

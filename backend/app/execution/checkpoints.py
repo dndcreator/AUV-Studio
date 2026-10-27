@@ -76,8 +76,8 @@ def continuous_snapshot(
     simulation_seq: int,
 ) -> dict[str, Any]:
     return {
-        "simulation_state": context.get("_simulation", {}),
-        "actions": actions,
+        "simulation_state": copy.deepcopy(context.get("_simulation", {})),
+        "actions": copy.deepcopy(actions),
         "round": round_index,
         "action_index": action_index,
         "simulation_seq": simulation_seq,

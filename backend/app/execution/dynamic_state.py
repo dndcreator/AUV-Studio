@@ -20,6 +20,7 @@ def init_dynamic_state(config: Any) -> dict[str, Any]:
         "concepts": {},
         "values": {},
         "history": [],
+        "last_coded_event_seq": 0,
         "limits": {
             "max_concepts": _bounded_int(raw.get("max_concepts"), 48, 8, 120),
             "max_per_owner": _bounded_int(raw.get("max_per_owner"), 10, 2, 30),
@@ -46,7 +47,9 @@ def state_coder_audit_clause(actions: list[dict[str, Any]], *, actions_in_audit:
         "promote an unsupported claim into an established fact. scope, owner_id, visibility, and value_type are immutable after creation. "
         "Put the proposal in state_patch with "
         "schema_ops and state_ops. Upserts require id, description, scope, owner_id, value_type, visibility, retention, "
-        "future_relevance, reason, and source_refs. retention is an object with mode persistent|until_resolved|rounds; "
+        "future_relevance, reason, and source_refs. Optional subject_id and predicate index the described entity and "
+        "attribute; reuse existing exact predicates, do not confuse the subject with the private owner. "
+        "retention is an object with mode persistent|until_resolved|rounds; "
         "rounds also requires ttl_rounds. State sets require concept_id, value, confidence, reason, source_refs and "
         "evidence_kind (claim|observation|action|inference). A claim records that the source participant asserted "
         "something, not that it happened; preserve the speaker and uncertainty in the value/description. "
@@ -85,7 +88,8 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         "uncertainty. Retire a concept only when it is resolved and cannot constrain future behavior. Return JSON only with "
         "schema_ops and state_ops. schema_ops support upsert or retire. state_ops support set or unset. Each upsert requires "
         "id, description, scope(global|entity), owner_id, value_type(scalar|text|list|object), visibility(global|private), "
-        "retention, future_relevance, reason, and source_refs. retention must be "
+        "retention, future_relevance, reason, and source_refs. Optional subject_id/predicate provide an entity/attribute "
+        "index, not executable rules; reuse existing exact names. The subject is not necessarily the private owner. retention must be "
         '{"mode":"persistent|until_resolved|rounds","ttl_rounds":3}. Each state operation requires concept_id, value '
         "for set, confidence, reason, source_refs and evidence_kind (claim|observation|action|inference). "
         "Preserve attribution: claims/observations/inferences are not independently verified facts. An accepted "
@@ -103,7 +107,20 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
     )
 
 
-def parse_state_coder_output(content: str) -> dict[str, Any]:
+def _unique_state_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate state field")
+        result[key] = value
+    return result
+
+
+def _invalid_state_constant(value: str) -> None:
+    raise ValueError("nonfinite state number")
+
+
+def parse_state_coder_output(content: str, *, director_envelope: bool = False) -> dict[str, Any]:
     candidate = content.strip()
     if candidate.startswith("```json"):
         candidate = candidate[7:]
@@ -113,15 +130,16 @@ def parse_state_coder_output(content: str) -> dict[str, Any]:
         candidate = candidate[:-3]
     candidate = candidate.strip()
     try:
-        parsed = json.loads(candidate)
-    except (json.JSONDecodeError, TypeError):
+        parsed = json.loads(candidate, object_pairs_hook=_unique_state_object, parse_constant=_invalid_state_constant)
+    except (ValueError, TypeError):
         return {"schema_ops": [], "state_ops": [], "parse_error": "invalid_json"}
+    if director_envelope and isinstance(parsed, dict):
+        parsed = parsed.get("state_patch")
     if not isinstance(parsed, dict):
         return {"schema_ops": [], "state_ops": [], "parse_error": "not_object"}
-    return {
-        "schema_ops": parsed.get("schema_ops", []) if isinstance(parsed.get("schema_ops", []), list) else [],
-        "state_ops": parsed.get("state_ops", []) if isinstance(parsed.get("state_ops", []), list) else [],
-    }
+    if parsed.get("parse_error") or any(not isinstance(parsed.get(key), list) for key in ("schema_ops", "state_ops")):
+        return {"schema_ops": [], "state_ops": [], "parse_error": "invalid_patch_shape"}
+    return {"schema_ops": parsed["schema_ops"], "state_ops": parsed["state_ops"]}
 
 
 def apply_dynamic_state_proposal(
@@ -210,6 +228,22 @@ def apply_dynamic_state_proposal(
         if value_type not in {"scalar", "text", "list", "object"}:
             value_type = "text"
         prior = concepts.get(concept_id, {}) if isinstance(concepts.get(concept_id), dict) else {}
+        index = {}
+        invalid_index = False
+        for key, limit in (("subject_id", 120), ("predicate", 80)):
+            value = raw.get(key, prior.get(key, ""))
+            if not isinstance(value, str) or len(value) > limit or (key in raw and not value.strip()):
+                rejected.append({"kind": "schema", "id": concept_id, "reason": f"invalid_{key}"})
+                invalid_index = True
+                break
+            if prior.get(key) and value.strip() != prior[key]:
+                rejected.append({"kind": "schema", "id": concept_id, "reason": f"immutable_index:{key}"})
+                invalid_index = True
+                break
+            if value.strip():
+                index[key] = value.strip()
+        if invalid_index:
+            continue
         if not is_new:
             immutable = {"scope": scope, "owner_id": owner_id, "visibility": visibility, "value_type": value_type}
             changed_fields = [key for key, value in immutable.items() if prior.get(key) != value]
@@ -227,6 +261,7 @@ def apply_dynamic_state_proposal(
             rejected.append({"kind": "schema", "id": concept_id, "reason": "invalid_retention"})
             continue
         concepts[concept_id] = {
+            **index,
             "id": concept_id,
             "description": description,
             "scope": scope,
@@ -396,7 +431,17 @@ def compact_dynamic_state(raw: Any, *, node_id: str = "", include_private: bool 
         "concepts": visible_concepts,
         "values": visible_values,
         "limits": copy.deepcopy(state["limits"]),
+        "last_coded_event_seq": state["last_coded_event_seq"],
     }
+
+
+def query_dynamic_state(raw: Any, *, subject_id: str = "", predicate: str = "", node_id: str = "") -> dict[str, Any]:
+    """Exact optional indexes over the existing owner-filtered state, not another store."""
+    view = compact_dynamic_state(raw, node_id=node_id)
+    return {key: {"schema": schema, "current": view["values"].get(key)}
+            for key, schema in view["concepts"].items()
+            if (not subject_id or schema.get("subject_id") == subject_id)
+            and (not predicate or schema.get("predicate") == predicate)}
 
 
 def _normalize_dynamic_state(raw: Any) -> dict[str, Any]:
@@ -413,6 +458,8 @@ def _normalize_dynamic_state(raw: Any) -> dict[str, Any]:
             evidence_kind = value.get("evidence_kind", "inference")
             value["evidence_kind"] = evidence_kind if isinstance(evidence_kind, str) and evidence_kind in EVIDENCE_KINDS else "inference"
     baseline["history"] = copy.deepcopy(source.get("history", [])) if isinstance(source.get("history", []), list) else []
+    cursor = source.get("last_coded_event_seq", 0)
+    baseline["last_coded_event_seq"] = cursor if type(cursor) is int and cursor >= 0 else 0
     return baseline
 
 

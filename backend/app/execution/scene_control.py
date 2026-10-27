@@ -56,10 +56,21 @@ def scene_audit_instruction(
     connections: list[dict[str, Any]] | None = None,
     participants: list[dict[str, Any]] | None = None,
     allowance: dict[str, Any] | None = None,
+    uncoded_actions: list[dict[str, Any]] | None = None,
 ) -> str:
     first_round = int(scene_control.get("last_audited_round", 0)) + 1
     earlier = [item for item in recent_actions if int(item.get("round", 0)) < first_round][-4:]
     pending = [item for item in recent_actions if int(item.get("round", 0)) >= first_round]
+    audit_actions = []
+    seen = set()
+    for item in earlier + pending + (uncoded_actions or []):
+        key = item.get("event_seq")
+        if key is not None and key in seen:
+            continue
+        seen.add(key)
+        audit_actions.append(item)
+    if all(type(item.get("event_seq")) is int for item in audit_actions):
+        audit_actions.sort(key=lambda item: item["event_seq"])
     return (
         "Audit the boundary of this distributed process episode. Nodes own decisions and actions; do not "
         "invent their actions, conclusions, plot, or research findings. Private intent, observation and self_update "
@@ -106,7 +117,7 @@ def scene_audit_instruction(
         f"SCENE CONTROL:\n{json.dumps(scene_control, ensure_ascii=False, default=str)}\n\n"
         f"CURRENT MACRO STATE:\n{json.dumps(state, ensure_ascii=False, default=str)}\n\n"
         f"PARTICIPANT ROSTER:\n{json.dumps(participants or [], ensure_ascii=False, default=str)}\n\n"
-        f"ACTUAL NODE OUTPUTS:\n{json.dumps(earlier + pending, ensure_ascii=False, default=str)}"
+        f"ACTUAL NODE OUTPUTS:\n{json.dumps(audit_actions, ensure_ascii=False, default=str)}"
         + f"\nCOMMUNICATION CHANNELS (empty means shared public scene):\n{json.dumps(connections or [], ensure_ascii=False)}"
     )
 
