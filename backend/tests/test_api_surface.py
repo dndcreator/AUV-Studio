@@ -1,6 +1,9 @@
 ﻿from __future__ import annotations
 
 from collections.abc import Generator
+import json
+
+import pytest
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -10,6 +13,22 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base
 from app.main import app, get_db
 from app.models import MemoryRecord, RunRecord
+
+
+@pytest.fixture
+def plan_model(monkeypatch):
+    async def chat(**kwargs):
+        return {"content": json.dumps({
+            "intent_mode": "roleplay", "domain": "story_simulation", "goal": "A complete simulation plan",
+            "roles": [{"name": "Alice", "count": 1}, {"name": "Bob", "count": 1}],
+            "assumptions": ["An explicit assumption"], "hypotheses": ["A falsifiable hypothesis"],
+            "decision_criteria": ["Evidence quality"], "quality_controls": ["Check uncertainty"],
+            "success_metrics": ["turning point traceability"],
+            "research_design": {"methodology": "A simulated interview"},
+            "simulation_design": {"interaction_rules": ["Participants control only themselves"]},
+            "output_plan": {"full_log": True, "narrative_options": ["screenplay"]},
+        })}
+    monkeypatch.setattr("app.main.provider.chat", chat)
 
 
 def _client_with_db() -> Generator[TestClient, None, None]:
@@ -55,6 +74,26 @@ def _workflow_payload(workflow_id: str, name: str) -> dict:
         "entry_nodes": ["n1"],
         "environment": {"profile": "", "scenario": "", "facts": [], "constraints": [], "glossary": {}},
     }
+
+
+@pytest.mark.parametrize("kind", ["fidelity", "transport"])
+def test_report_errors_are_actionable_without_exposing_rejected_work(monkeypatch, kind):
+    from app.execution.provider import ProviderError
+    from app.narrative_fidelity import NarrativeFidelityError
+
+    async def fail(**kwargs):
+        if kind == "fidelity":
+            raise NarrativeFidelityError("narrative_fidelity_failed", [{"candidate_quote": "PRIVATE-DRAFT"}])
+        raise ProviderError("PRIVATE-ENDPOINT-RESPONSE", code="network_error")
+
+    monkeypatch.setattr("app.main.generate_run_report", fail)
+    for client in _client_with_db():
+        result = client.post("/api/runs/test/report", json={"mode": "narrative"})
+    assert result.status_code == 502
+    detail = result.json()["detail"]
+    assert detail["code"] == ("narrative_fidelity_failed" if kind == "fidelity" else "network_error")
+    assert isinstance(detail["message"], str)
+    assert "PRIVATE" not in result.text
 
 
 def test_browser_origin_guard_allows_local_ui_and_blocks_foreign_sites() -> None:
@@ -155,7 +194,7 @@ def test_evidence_parse_api_accepts_raw_file_upload() -> None:
             pass
 
 
-def test_research_compile_persists_confirmed_evidence() -> None:
+def test_research_compile_persists_confirmed_evidence(plan_model) -> None:
     gen = _client_with_db()
     client = next(gen)
     try:
@@ -269,7 +308,7 @@ def test_mode_contracts_endpoint() -> None:
             pass
 
 
-def test_template_compile_endpoint() -> None:
+def test_template_compile_endpoint(plan_model) -> None:
     gen = _client_with_db()
     client = next(gen)
     try:
@@ -324,7 +363,7 @@ def test_template_compile_endpoint() -> None:
             pass
 
 
-def test_template_compile_auto_roleplay_mode() -> None:
+def test_template_compile_auto_roleplay_mode(plan_model) -> None:
     gen = _client_with_db()
     client = next(gen)
     try:
@@ -351,7 +390,7 @@ def test_template_compile_auto_roleplay_mode() -> None:
             pass
 
 
-def test_template_compile_dialogue_contract_is_confirmable_and_bounded() -> None:
+def test_template_compile_dialogue_contract_is_confirmable_and_bounded(plan_model) -> None:
     gen = _client_with_db()
     client = next(gen)
     try:

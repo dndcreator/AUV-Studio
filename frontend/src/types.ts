@@ -96,7 +96,8 @@ export type RunEvent = {
     | "nodes_activated"
     | "episode_audited"
     | "dynamic_state_updated"
-    | "dynamic_state_failed";
+    | "dynamic_state_failed"
+    | "action_checked";
   timestamp: string;
   duration_ms?: number | null;
   payload: Record<string, unknown>;
@@ -233,6 +234,16 @@ export type RunReport = {
     evidence_refs: string[];
   }>;
   evidence_index: string[];
+  fidelity?: {
+    version: number;
+    source_hash: string;
+    checks: Array<{
+      attempt: number;
+      candidate_hash: string;
+      decision: "accept" | "revise";
+      findings: Array<{ candidate_quote: string; source_quote: string; reason: string }>;
+    }>;
+  } | null;
 };
 
 export type TemplateSummary = {
@@ -426,6 +437,7 @@ export type PlanCompileResponse = {
   extracted: Record<string, unknown>;
   rationale: string;
   simulation_blueprint: Record<string, unknown>;
+  generation?: { attempts: number; recovered_errors: Array<Record<string, unknown>> };
 };
 
 export type HumanResponseRequest = {

@@ -23,7 +23,7 @@ from app.evaluation.budget import EvalBudgetExceeded
 def turn(node, action, sources=(), secret=""):
     return {"node_id": node, "status": "succeeded", "input": {"context": {"recent_actions": [{"node_id": source} for source in sources]},
             "_interactions": [{"source": source, "message": action} for source in sources], "private_probe": secret},
-            "output": {"action": action, "intent": "I claim initiative", "round": 1}}
+            "output": {"participation": "act", "action": action, "intent": "I claim initiative", "round": 1}}
 
 
 def contract():
@@ -74,7 +74,7 @@ def test_missing_real_checkpoint_responses_are_not_a_successful_simulation():
 
 
 def test_aborted_long_run_is_not_a_completed_long_horizon_validation():
-    rows = [{**turn("a", f"action {index}"), "output": {"action": f"action {index}", "round": index}} for index in range(1, 25)]
+    rows = [{**turn("a", f"action {index}"), "output": {"participation": "act", "action": f"action {index}", "round": index}} for index in range(1, 25)]
     detail = {"status": "failed", "node_runs": rows, "output": {"simulation": {"dynamic_state": {"values": {}}}}}
     result = evaluate_behavior(detail, contract(), [])
     assert result["long_horizon"]["status"] == "incomplete"
@@ -89,7 +89,7 @@ def test_cli_does_not_treat_missing_coverage_as_success(monkeypatch, status, cod
                 "usage": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": 0}}, "not-written.md"
 
     monkeypatch.setattr("app.eval_runner._execute", execute)
-    assert main(["--scenario", "boundary_autonomy", "--execute", "--max-calls", "15"]) == code
+    assert main(["--scenario", "boundary_autonomy", "--execute", "--max-calls", "24"]) == code
 
 
 def proposal(concept, value, source, owner=""):
@@ -98,6 +98,12 @@ def proposal(concept, value, source, owner=""):
             "retention": {"mode": "persistent"}, "future_relevance": "Constrains later decisions", "reason": "Recorded from a specific action",
             "source_refs": [source]}, {"op": "set", "concept_id": concept, "value": value, "confidence": 1,
                                       "reason": "Recorded from a specific action", "source_refs": [source]}
+
+
+def uncoded_batch(prompt):
+    actions, _ = json.JSONDecoder().raw_decode(prompt.split("ACTUAL NODE OUTPUTS:\n", 1)[1])
+    refs, _ = json.JSONDecoder().raw_decode(prompt.split("UNCODED ACTION REFS (read their full text in ACTUAL NODE OUTPUTS above):\n", 1)[1])
+    return [row for row in actions if any(row["event_seq"] == ref["event_seq"] for ref in refs)]
 
 
 def test_real_engine_24_rounds_keeps_authority_privacy_and_rejects_unsupported_changes():
@@ -110,6 +116,8 @@ def test_real_engine_24_rounds_keeps_authority_privacy_and_rejects_unsupported_c
         audits = 0
 
         async def chat(self, model, system_prompt, user_prompt):
+            if "action consistency checker" in system_prompt:
+                return {"content": '{"decision":"accept","reason":"Offline fixture.","scope":{"self_owned":true,"public_only":true},"findings":[]}'}
             if "route attention" in system_prompt:
                 return {"content": '{"active_node_ids":["mina","ivo","sen"]}'}
             if "continuity auditor" in system_prompt:
@@ -119,7 +127,7 @@ def test_real_engine_24_rounds_keeps_authority_privacy_and_rejects_unsupported_c
                 channels = json.loads(user_prompt.split("COMMUNICATION CHANNELS (empty means shared public scene):\n", 1)[1].split("\n\n", 1)[0])
                 assert [(edge["source"], edge["target"]) for edge in channels] == [("mina", "ivo"), ("ivo", "sen")]
                 self.audits += 1
-                batch, _ = json.JSONDecoder().raw_decode(user_prompt.split("UNCODED ACTIONS:\n", 1)[1])
+                batch = uncoded_batch(user_prompt)
                 first, second, third = batch
                 assert first["received_event_seqs"] == []
                 assert first["event_seq"] in second["received_event_seqs"]
@@ -145,7 +153,7 @@ def test_real_engine_24_rounds_keeps_authority_privacy_and_rejects_unsupported_c
                        for peer in packet["communication"]["known_participants"])
             snapshots.append((role["node_id"], packet))
             text = "EARLY-FACT-18: hold dispatch until release is verified." if packet["action_index"] == 1 else f"I propose check {packet['round']} as {role['node_id']}."
-            return {"content": json.dumps({"action": text, "intent": "PRIVATE-K7" if role["node_id"] == "mina" else "verify evidence",
+            return {"content": json.dumps({"participation": "act", "action": text, "intent": "PRIVATE-K7" if role["node_id"] == "mina" else "verify evidence",
                 "turn_delta": text, "self_update": "My current work remains evidence-driven.",
                 "state_updates": {"world_state": {"current_time": "year 9999"}}})}
 
@@ -155,7 +163,8 @@ def test_real_engine_24_rounds_keeps_authority_privacy_and_rejects_unsupported_c
     with sessionmaker(bind=database)() as db:
         run_id = asyncio.run(WorkflowEngine(provider=provider).run(db, workflow, RunRequest()))
         run = db.get(RunRecord, run_id)
-        assert run.status == "succeeded" and provider.audits == 24
+        assert run.status == "stopped" and provider.audits == 24
+        assert json.loads(run.output_json)["completion"]["status"] == "incomplete"
         assert db.query(NodeRunRecord).filter_by(run_id=run_id).count() == 72
         output = json.loads(run.output_json)["simulation"]
         assert output["dynamic_state"]["values"]["release_rule"]["value"] == "EARLY-FACT-18"
@@ -185,6 +194,8 @@ def test_continuous_failures_keep_accepted_state_actions_and_rollback_evidence(f
         round = 0
 
         async def chat(self, model, system_prompt, user_prompt):
+            if "action consistency checker" in system_prompt:
+                return {"content": '{"decision":"accept","reason":"Offline fixture.","scope":{"self_owned":true,"public_only":true},"findings":[]}'}
             if "route attention" in system_prompt:
                 self.round += 1
                 if self.round == 2 and failure_stage in {"router", "budget"}:
@@ -193,7 +204,7 @@ def test_continuous_failures_keep_accepted_state_actions_and_rollback_evidence(f
             if "continuity auditor" in system_prompt:
                 if self.round == 2 and failure_stage == "audit":
                     raise RuntimeError("audit failed")
-                batch, _ = json.JSONDecoder().raw_decode(user_prompt.split("UNCODED ACTIONS:\n", 1)[1])
+                batch = uncoded_batch(user_prompt)
                 source = {key: batch[0][key] for key in ("node_id", "action_index", "event_seq")}
                 schema, value = proposal("release_rule", "EARLY-FACT-18", source)
                 private_schema, private_value = proposal("mina_secret", "PRIVATE-BUSINESS-STATE", source, "mina")
@@ -201,7 +212,7 @@ def test_continuous_failures_keep_accepted_state_actions_and_rollback_evidence(f
                     "schema_ops": [schema, private_schema], "state_ops": [value, private_value]}})}
             if self.round == 2 and failure_stage == "agent":
                 raise RuntimeError("agent failed")
-            return {"content": '{"action":"EARLY-FACT-18 remains a required constraint.","intent":"Verify the source."}'}
+            return {"content": '{"participation":"act","action":"EARLY-FACT-18 remains a required constraint.","intent":"Verify the source."}'}
 
     database = create_engine("sqlite://")
     Base.metadata.create_all(database)

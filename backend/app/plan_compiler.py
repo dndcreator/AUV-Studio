@@ -11,6 +11,8 @@ from fastapi import HTTPException
 from .evidence import compact_evidence
 from .execution.provider import OpenAICompatibleProvider
 from .mode_contracts import MODE_CONTRACTS
+from .plan_generation import generate_plan_object
+from .plan_phases import normalize_plan_phases
 from .schemas import (
     NodePosition,
     PlanCompileRequest,
@@ -27,7 +29,7 @@ async def compile_workflow_from_plan(
     if not text:
         raise HTTPException(status_code=400, detail="plan_text is required")
 
-    extracted = await _extract_plan_structured(provider=provider, req=request)
+    extracted, generation = await _extract_plan_structured(provider=provider, req=request)
     simulation_blueprint = _build_simulation_blueprint(extracted=extracted, req=request)
     workflow = _build_workflow_from_extracted(extracted=extracted, req=request, simulation_blueprint=simulation_blueprint)
     if request.evidence_pack:
@@ -40,15 +42,18 @@ async def compile_workflow_from_plan(
         extracted=extracted,
         rationale=rationale,
         simulation_blueprint=simulation_blueprint,
+        generation=generation,
     )
 
 
-async def _extract_plan_structured(provider: OpenAICompatibleProvider, req: PlanCompileRequest) -> dict:
+async def _extract_plan_structured(provider: OpenAICompatibleProvider, req: PlanCompileRequest) -> tuple[dict, dict]:
     sys_prompt = (
         "You are a process architect for a distributed multi-agent simulation system. "
         "Turn a loose user plan into a complete but lightweight task contract and a set of autonomous participant identities. "
-        "Be exhaustive about research logic, actor/entity coverage, uncertainty, decision criteria, "
-        "quality controls, and final outputs. Do not assume the user has already provided every detail; "
+        "Cover the relevant actor/entity identities, uncertainty, constraints and outputs concisely. "
+        "Only research modes need research methodology; inapplicable fields may be empty. Do not repeat facts across sections. "
+        "Prioritize complete JSON, the task contract and named participant identities over optional detail. "
+        "Do not assume the user has already provided every detail; "
         "infer sensible defaults and mark uncertain items as assumptions."
     )
     evidence = compact_evidence(req.evidence_pack) if req.evidence_pack else {}
@@ -66,7 +71,7 @@ async def _extract_plan_structured(provider: OpenAICompatibleProvider, req: Plan
         - Choose mode/submode based on intent: roleplay for story/character evolution, research.simulation for "what would happen", research.research for simulated study/fieldwork, research.consulting for issue-tree/workstream reasoning, custom only when no standard mode fits.
         - Decide whether the simulation should use individuals, cohorts, organizations, environment, events, or artifacts.
         - For research/consulting, define hypotheses, decision criteria, sample or actor logic, bias risks, validation gaps, and outputs.
-        - For roleplay/story simulation, define characters, tensions, scene phases, turning points, style boundaries, and ending conditions.
+        - Define phases only within the requested segment. A requested ending starts at its final confrontation, not at world setup. Do not force a full-story arc or prescribe participants' outcomes. Supply explicit time_context and spatial_context when established; unknown coordinates may remain empty.
         - In roleplay or world-evolution simulation, roles must be entities inside the simulated world; use writers, editors, analysts, or other production roles only when the user explicitly asks for collaborative creation.
         - Define participants by their in-world or professional identity, not by literary functions such as emotional core, plot device, comic relief, or twist generator.
         - A requested writing style controls how participant output is represented. It never grants a participant authority to write other participants' actions or invent global facts.
@@ -96,6 +101,7 @@ async def _extract_plan_structured(provider: OpenAICompatibleProvider, req: Plan
             "shared_constraints": ["string"],
             "completion_condition": "string"
           }},
+          "phases": [{{"name":"string","objective":"string","exit_criteria":"string"}}],
           "constraints": ["string"],
           "key_questions": ["string"],
           "assumptions": ["string"],
@@ -154,6 +160,8 @@ async def _extract_plan_structured(provider: OpenAICompatibleProvider, req: Plan
           }},
           "quality_controls": ["string"],
           "environment": {{
+            "time_context":"string",
+            "spatial_context":"string",
             "profile":"string",
             "scenario":"string",
             "facts":["string"],
@@ -183,33 +191,8 @@ async def _extract_plan_structured(provider: OpenAICompatibleProvider, req: Plan
         {json.dumps(evidence, ensure_ascii=False, default=str) if evidence else "none"}
         """
     ).strip()
-    try:
-        llm = await provider.chat(model="", system_prompt=sys_prompt, user_prompt=user_prompt)
-        raw = str(llm.get("content", "")).strip()
-        parsed = _try_extract_json(raw)
-        if isinstance(parsed, dict):
-            return _normalize_extracted(parsed, req)
-    except Exception:  # noqa: BLE001
-        pass
-    return _heuristic_extract(req.plan_text, req)
-
-
-def _try_extract_json(raw: str) -> dict | None:
-    if not raw:
-        return None
-    try:
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else None
-    except Exception:  # noqa: BLE001
-        pass
-    m = re.search(r"\{[\s\S]*\}", raw)
-    if not m:
-        return None
-    try:
-        data = json.loads(m.group(0))
-        return data if isinstance(data, dict) else None
-    except Exception:  # noqa: BLE001
-        return None
+    parsed, generation = await generate_plan_object(provider, sys_prompt, user_prompt)
+    return _normalize_extracted(parsed, req), generation
 
 
 def _normalize_extracted(data: dict, req: PlanCompileRequest) -> dict:
@@ -303,6 +286,7 @@ def _normalize_extracted(data: dict, req: PlanCompileRequest) -> dict:
         "audience": str(data.get("audience", "")).strip() or "",
         "deliverable": deliverable,
         "task_contract": task_contract,
+        "phases": normalize_plan_phases(data.get("phases"), task_contract, simulation_design.get("phase_logic", [])),
         "constraints": _as_str_list(data.get("constraints", [])),
         "key_questions": _as_str_list(data.get("key_questions", [])),
         "assumptions": _as_str_list(data.get("assumptions", [])),
@@ -320,84 +304,14 @@ def _normalize_extracted(data: dict, req: PlanCompileRequest) -> dict:
         "environment": {
             "profile": str(env.get("profile", "")).strip(),
             "scenario": str(env.get("scenario", "")).strip() or req.plan_text[:220],
+            "time_context": _environment_time_context(env),
+            "spatial_context": _environment_spatial_context(env),
             "facts": _as_str_list(env.get("facts", [])),
             "constraints": _as_str_list(env.get("constraints", [])),
             "glossary": env.get("glossary", {}) if isinstance(env.get("glossary", {}), dict) else {},
             "context_book": _normalize_context_book(env.get("context_book", {})),
         },
     }
-
-
-def _heuristic_extract(text: str, req: PlanCompileRequest) -> dict:
-    audience = ""
-    m = re.search(r"(\d{1,2}\s*[-~到至]\s*\d{1,2}\s*岁?[^\n，。；]*)", text)
-    if not m:
-        m = re.search(r"(\d{1,2}\s*[-~]\s*\d{1,2}\s*(?:years?|yo|year-olds)[^,.;\n]*)", text, flags=re.IGNORECASE)
-    if m:
-        audience = m.group(1).strip()
-
-    market_keywords = ["市场", "调研", "用户", "竞品", "market", "research", "segment", "consumer"]
-    consulting_keywords = ["咨询", "战略", "增长", "商业模式", "降本", "strategy", "consulting", "growth", "pricing"]
-    roleplay_keywords = ["剧情", "故事", "角色", "扮演", "小说", "剧本", "roleplay", "story", "novel", "screenplay"]
-    domain = "market_research" if any(k.lower() in text.lower() for k in market_keywords) else "simulation"
-    if any(k.lower() in text.lower() for k in consulting_keywords):
-        domain = "consulting"
-    if any(k.lower() in text.lower() for k in roleplay_keywords):
-        domain = "story_simulation"
-
-    if domain == "story_simulation":
-        roles = [
-            {"name": "director", "count": 1, "focus": "控制剧情阶段、冲突强度和一致性", "entity_type": "organization", "responsibilities": ["phase control", "quality correction"]},
-            {"name": "lead_character", "count": 1, "focus": "核心角色行动、对话和心理变化", "entity_type": "individual", "responsibilities": ["act", "speak", "remember"]},
-            {"name": "supporting_character", "count": min(3, max(1, req.max_agents - 2)), "focus": "关系压力、冲突和转折", "entity_type": "individual", "responsibilities": ["react", "escalate", "reveal"]},
-        ]
-        method_modules = ["scenario_testing", "risk_review", "strategy_synthesis"]
-        deliverable = "story or script"
-    elif domain == "consulting":
-        roles = [
-            {"name": "engagement_manager", "count": 1, "focus": "问题结构和决策标准", "entity_type": "organization", "responsibilities": ["issue tree", "decision criteria"]},
-            {"name": "workstream_analyst", "count": min(4, max(1, req.max_agents - 2)), "focus": "分模块推演与选项筛选", "entity_type": "organization", "responsibilities": ["analysis", "option screening"]},
-            {"name": "risk_reviewer", "count": 1, "focus": "风险、反例和验证缺口", "entity_type": "individual", "responsibilities": ["challenge", "validate"]},
-        ]
-        method_modules = ["market_scan", "competitor_analysis", "risk_review", "strategy_synthesis"]
-        deliverable = "consulting briefing"
-    else:
-        roles = [
-            {"name": "research_planner", "count": 1, "focus": "拆解目标、假设和研究方案", "entity_type": "organization", "responsibilities": ["research design", "sampling logic"]},
-            {"name": "respondent_cohort", "count": min(4, max(1, req.max_agents - 2)), "focus": "模拟目标群体反应和分歧", "entity_type": "group", "responsibilities": ["cohort response", "segment split"]},
-            {"name": "synthesis_reviewer", "count": 1, "focus": "汇总结论、置信度和限制", "entity_type": "individual", "responsibilities": ["synthesis", "limitations"]},
-        ]
-        method_modules = ["market_scan", "user_segmentation", "scenario_testing", "risk_review", "strategy_synthesis"] if domain == "market_research" else ["scenario_testing", "risk_review", "strategy_synthesis"]
-        deliverable = "structured report"
-    return _normalize_extracted({
-        "intent_mode": _infer_intent_mode(text),
-        "intent_submode": "none",
-        "goal": text[:160],
-        "domain": domain,
-        "audience": audience,
-        "deliverable": deliverable,
-        "constraints": [],
-        "key_questions": _default_key_questions(domain=domain, text=text),
-        "assumptions": ["User plan is incomplete; missing items are treated as explicit assumptions."],
-        "hypotheses": _default_hypotheses(domain=domain, text=text),
-        "success_metrics": _default_success_metrics(domain=domain),
-        "decision_criteria": _default_decision_criteria(domain=domain),
-        "method_modules": method_modules,
-        "semantics": _infer_semantics(text=text, req=req, roles=roles, domain=domain),
-        "roles": roles,
-        "research_design": _default_research_design(domain=domain, audience=audience),
-        "simulation_design": _default_simulation_design(domain=domain, text=text),
-        "output_plan": _default_output_plan(domain=domain),
-        "output_contract": _normalize_output_contract({}, text),
-        "quality_controls": _default_quality_controls(domain=domain),
-        "environment": {
-            "profile": "auto-generated from natural-language plan",
-            "scenario": text[:220],
-            "facts": [],
-            "constraints": [],
-            "glossary": {},
-        },
-    }, req)
 
 
 def _as_str_list(value: object) -> list[str]:
@@ -569,46 +483,6 @@ def _normalize_output_plan(value: object) -> dict:
         "briefing_sections": _as_str_list(raw.get("briefing_sections", [])),
         "narrative_options": _as_str_list(raw.get("narrative_options", [])),
     }
-
-
-def _default_key_questions(*, domain: str, text: str) -> list[str]:
-    if domain == "story_simulation":
-        return ["What changes first?", "Which actor escalates the tension?", "What irreversible turning point occurs?"]
-    if domain == "consulting":
-        return ["What options should be kept or dropped?", "Which assumption drives the decision?", "What evidence would change the recommendation?"]
-    if domain == "market_research":
-        return ["Who is likely to accept or reject the idea?", "What drives adoption and resistance?", "Which next validation is worth paying for?"]
-    return ["What is likely to happen?", "Which assumptions are fragile?", "What should be observed next?"]
-
-
-def _default_hypotheses(*, domain: str, text: str) -> list[str]:
-    if domain == "story_simulation":
-        return ["Character goals will conflict under pressure.", "Prior context and memory will shape later choices."]
-    if domain == "consulting":
-        return ["A small number of decision criteria will dominate the recommendation.", "At least one attractive option will fail under risk review."]
-    if domain == "market_research":
-        return ["Interest will vary sharply by segment.", "Novelty may create curiosity while taste/price constraints limit adoption."]
-    return ["The described setup contains enough constraints to simulate plausible evolution."]
-
-
-def _default_success_metrics(*, domain: str) -> list[str]:
-    if domain == "story_simulation":
-        return ["scene specificity", "character consistency", "turning point traceability"]
-    if domain == "consulting":
-        return ["option screening clarity", "risk coverage", "actionability"]
-    if domain == "market_research":
-        return ["segment signal clarity", "adoption/resistance drivers", "validation usefulness"]
-    return ["coherence", "traceability", "decision usefulness"]
-
-
-def _default_decision_criteria(*, domain: str) -> list[str]:
-    if domain == "story_simulation":
-        return ["dramatic tension", "internal logic", "style fit"]
-    if domain == "consulting":
-        return ["impact", "feasibility", "risk", "speed"]
-    if domain == "market_research":
-        return ["acceptance likelihood", "price sensitivity", "channel fit", "validation cost"]
-    return ["plausibility", "risk", "confidence"]
 
 
 def _default_research_design(*, domain: str, audience: str) -> dict:
@@ -1106,89 +980,7 @@ def _build_simulation_blueprint(extracted: dict, req: PlanCompileRequest) -> dic
     decision_criteria = _as_str_list(extracted.get("decision_criteria", []))
     quality_controls = _as_str_list(extracted.get("quality_controls", []))
 
-    phases: list[dict[str, str]] = [
-        {
-            "id": "phase_scope",
-            "name": "Scope Definition",
-            "objective": "Align decision question, constraints, and assumptions.",
-            "exit_criteria": "Key assumptions and scope confirmed.",
-        },
-        {
-            "id": "phase_explore",
-            "name": "Evidence Exploration",
-            "objective": "Collect and compare evidence from role-specific perspectives.",
-            "exit_criteria": "Major hypotheses have supporting or conflicting signals.",
-        },
-        {
-            "id": "phase_synthesize",
-            "name": "Synthesis",
-            "objective": "Converge findings into scenarios and recommended actions.",
-            "exit_criteria": "Clear options, risks, and next actions are produced.",
-        },
-    ]
-    if mode == "roleplay":
-        phases = [
-            {
-                "id": "phase_setup",
-                "name": "Story Setup",
-                "objective": "Establish world state, motivations, and tensions.",
-                "exit_criteria": "All major actors have clear intent.",
-            },
-            {
-                "id": "phase_conflict",
-                "name": "Conflict Evolution",
-                "objective": "Simulate interactions, pressure, and turning points.",
-                "exit_criteria": "At least one irreversible turning point occurs.",
-            },
-            {
-                "id": "phase_resolution",
-                "name": "Resolution",
-                "objective": "Conclude outcomes and unresolved tensions.",
-                "exit_criteria": "Outcome is coherent and traceable to prior events.",
-            },
-        ]
-    if mode == "research" and submode == "research":
-        phases = [
-            {
-                "id": "phase_design",
-                "name": "Research Design",
-                "objective": "Define methods, sampling logic, and measurement scope.",
-                "exit_criteria": "Method and quality controls are explicit.",
-            },
-            {
-                "id": "phase_fieldwork",
-                "name": "Fieldwork Simulation",
-                "objective": "Simulate data collection process and respondent/subject behavior.",
-                "exit_criteria": "Sufficient evidence and anomalies are captured.",
-            },
-            {
-                "id": "phase_analysis",
-                "name": "Analysis and Validation",
-                "objective": "Interpret evidence with bias and limitation controls.",
-                "exit_criteria": "Findings, confidence, and validation plan are explicit.",
-            },
-        ]
-    if mode == "research" and submode == "consulting":
-        phases = [
-            {
-                "id": "phase_problem",
-                "name": "Problem Structuring",
-                "objective": "Build issue tree and define decision criteria.",
-                "exit_criteria": "Decision criteria and hypotheses are aligned.",
-            },
-            {
-                "id": "phase_workstream",
-                "name": "Workstream Analysis",
-                "objective": "Run role-based workstreams across market/user/finance/risk.",
-                "exit_criteria": "Each workstream returns defensible conclusions.",
-            },
-            {
-                "id": "phase_recommend",
-                "name": "Recommendation",
-                "objective": "Screen options and produce action-ready recommendations.",
-                "exit_criteria": "Keep/drop/to-validate list is complete.",
-            },
-        ]
+    phases = extracted["phases"]
 
     contract = MODE_CONTRACTS.get(mode, MODE_CONTRACTS["custom"])
     submode_contract: dict[str, Any] = {}

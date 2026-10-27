@@ -170,7 +170,6 @@ def build_context_packet(
         "recent_actions": recent_actions[-12:],
         "director_guidance": director_guidance,
         "background": background_context or {"entries": []},
-        "evidence": state.get("evidence", {}) if isinstance(state, dict) else {},
     }
 
 
@@ -180,7 +179,10 @@ def action_instruction(context_packet: dict[str, Any], role_packet: dict[str, An
         "First decide whether your identity, knowledge, goals, and current situation justify participation. Control only "
         "yourself: never write another participant's action, reaction, thoughts, conclusion, or decision, and never turn an "
         "unobserved assumption into a global fact. Follow the shared task contract for language, format, style, and level of "
-        "detail. Follow the current Scene Contract for pacing, detail, and progress_scale independently. "
+        "detail. Dynamic State values marked recorded are sourced records, not independent truth certification. "
+        "Respect their evidence_kind: a claim is attributable to its speaker; an observation may be mistaken; "
+        "an inference remains an interpretation. Confidence alone does not turn any of these into confirmed facts. "
+        "Follow the current Scene Contract for pacing, detail, and progress_scale independently. "
         "Detail means selectively showing meaningful particulars, not a word quota or checklist: dialogue may include "
         "your exact words and behavior; analytical work may include your reasoning, evidence, uncertainty, and result. "
         "Use only the detail needed for this contribution. Do not repeat established information or add atmosphere, "
@@ -190,7 +192,8 @@ def action_instruction(context_packet: dict[str, Any], role_packet: dict[str, An
         "Meaningful initiative should originate from participants rather than the director. Follow the entity action contract "
         "in ROLE before any optional custom behavior rule. Produce an in-world action or response, never a paraphrase of this "
         "instruction or the requested task. Keep one turn focused on one "
-        "concrete contribution, and prioritize syntactically complete JSON over extra length. Return JSON only with: "
+        "concrete contribution, and prioritize syntactically complete JSON over extra length. participation and action "
+        "are required; act requires nonempty action. Private intent may be empty when unknown. Return JSON only with: "
         "participation (act|observe|wait), action (only your externally observable words, behavior or published work; "
         "put unspoken plans and inner thoughts in private fields, not action), intent (your private immediate aim), "
         "turn_delta (brief change claim, or empty if nothing changed), "
@@ -209,53 +212,6 @@ def action_instruction(context_packet: dict[str, Any], role_packet: dict[str, An
     )
 
 
-def normalize_action_output(output: dict[str, Any], *, round_index: int, action_index: int) -> dict[str, Any]:
-    content = str(output.get("content") or output.get("text") or output.get("action") or "").strip()
-    parsed: dict[str, Any] = output if isinstance(output.get("action"), str) else {}
-    candidate = content.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    if candidate.startswith("{") and candidate.endswith("}"):
-        try:
-            value = json.loads(candidate)
-            if isinstance(value, dict):
-                parsed = value
-        except json.JSONDecodeError:
-            parsed = {}
-    participation = str(parsed.get("participation", "act")).strip().lower()
-    if participation not in {"act", "observe", "wait"}:
-        participation = "act"
-    action = str(parsed["action"]).strip() if isinstance(parsed.get("action"), str) else content
-    updates = parsed.get("state_updates", output.get("simulation_updates", {}))
-    if not isinstance(updates, dict):
-        updates = {}
-    intent = str(parsed.get("intent") or parsed.get("proposal_summary", "")).strip()
-    shared_effect_claim = str(parsed.get("shared_effect_claim") or parsed.get("public_state_update", "")).strip()
-    self_update = str(parsed.get("self_update") or parsed.get("private_state_update", "")).strip()
-    episode_signal = str(parsed.get("episode_signal") or parsed.get("boundary_signal", "continue")).strip().lower()
-    if episode_signal not in {"continue", "ready"}:
-        episode_signal = "continue"
-    return {
-        **output,
-        "content": action,
-        "action": action,
-        "participation": participation,
-        "turn_delta": str(parsed.get("turn_delta", "")).strip(),
-        "intent": intent,
-        "observation": str(parsed.get("observation", "")).strip(),
-        "self_update": self_update,
-        "shared_effect_claim": shared_effect_claim,
-        "episode_signal": episode_signal,
-        "simulation_updates": updates,
-        # Legacy aliases keep old run records and integrations readable.
-        "proposal_summary": intent,
-        "public_state_update": shared_effect_claim,
-        "private_state_update": self_update,
-        "boundary_signal": "ready" if episode_signal == "ready" else "none",
-        "round": round_index,
-        "action_index": action_index,
-        **({"result": parsed["result"]} if isinstance(parsed.get("result"), bool) else {}),
-    }
-
-
 def parse_director_control(content: str, *, default_guidance: str = "") -> dict[str, Any]:
     candidate = content.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
@@ -269,6 +225,8 @@ def parse_director_control(content: str, *, default_guidance: str = "") -> dict[
         decision = "continue"
     return {
         "decision": decision,
+        "task_complete": value.get("task_complete") if type(value.get("task_complete")) is bool else None,
+        "completion_reason": value["completion_reason"].strip() if isinstance(value.get("completion_reason"), str) else "",
         "guidance": str(value.get("guidance") or default_guidance).strip(),
         "reason": str(value.get("reason") or "").strip(),
         "shared_state_summary": str(value.get("shared_state_summary") or "").strip(),

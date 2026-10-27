@@ -30,6 +30,17 @@ describe("Live broadcast selection", () => {
     expect(rows).toHaveLength(0);
   });
 
+  it("keeps action-check candidates and private evidence out of the broadcast", () => {
+    const rows = buildGlimpseRows([
+      event({ seq: 1, event: "action_checked", payload: {
+        candidate: { action: "Rejected cross-era encounter" },
+        assessment: { decision: "conflict", reason: "Private checking evidence" }
+      } }),
+      event({ seq: 2, payload: { output: { content: "I write a note." } } })
+    ]);
+    expect(rows.map((row) => row.text)).toEqual(["I write a note."]);
+  });
+
   it("includes readable output from custom and external node ids", () => {
     const rows = buildGlimpseRows([
       event({ node_id: "custom_partner", payload: { output: { content: "她沉默了一会儿，然后把门打开。" } } })
@@ -43,6 +54,13 @@ describe("Live broadcast selection", () => {
       event({ node_id: "summary_1", payload: { output: { content: "A very long final synthesis" } } })
     ]);
     expect(rows).toHaveLength(0);
+  });
+
+  it("keeps terminal completion metadata out of character dialogue", () => {
+    expect(buildGlimpseRows([
+      event({ node_id: "run_control", event: "succeeded", payload: { completion: { status: "completed", reason: "goal_completed" } } }),
+      event({ node_id: "run_control", event: "stopped", payload: { completion: { status: "incomplete", reason: "action_limit" } } })
+    ])).toHaveLength(0);
   });
 
   it("keeps user-facing control events but hides backstage director corrections", () => {

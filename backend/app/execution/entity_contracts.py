@@ -38,3 +38,41 @@ def entity_action_contract(entity_type: str) -> str:
         normalized,
         "Act as the defined entity inside the world and produce a concrete contribution rather than restating the instruction.",
     )
+
+
+def entity_detail_instruction(entity_type: str, simulation: object) -> str:
+    if not isinstance(simulation, dict):
+        return ""
+    granularity = str(simulation.get("detail_granularity", "concise")).strip().lower()
+    if granularity != "detailed":
+        return ""
+    instructions = {
+        "individual": (
+            "When useful, show the person's specific words and actions rather than only a summary. "
+            "Private experience belongs only in private fields, never public action narration. "
+            "Select particulars that matter to this response; silence or a brief action can be sufficient."
+        ),
+        "group": (
+            "Do not write the group as one person. When relevant, show differences in opinion, representative remarks, "
+            "or observable collective responses without requiring a catalogue of every subgroup."
+        ),
+        "organization": (
+            "Show the relevant institutional decision, procedure, or resource consequence concretely when needed. "
+            "Do not invent internal activity just to make the response longer."
+        ),
+        "environment": (
+            "Describe environmental particulars only where they affect perception, constraints, or available action. "
+            "Do not repeat scenery that has not meaningfully changed."
+        ),
+        "event": (
+            "Show what the event actually changes and its relevant immediate consequences. "
+            "Do not invent extra stages or aftershocks to fill space, or turn the event into a person."
+        ),
+        "artifact": (
+            "Show the artifact's relevant content, condition, or use when these affect the current interaction. "
+            "Do not repeat its full description or assign it a human inner life."
+        ),
+    }
+    return instructions.get(entity_type, "Show the concrete contribution at the detail level needed; do not pad the response.") + (
+        " These are optional detail choices, not a checklist or minimum length. The current Scene Contract takes precedence."
+    )

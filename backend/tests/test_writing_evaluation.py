@@ -24,7 +24,9 @@ class Provider:
 
     async def chat(self, model: str, system_prompt: str, user_prompt: str) -> dict:
         self.prompts.append(user_prompt)
-        if "fixed criteria" in system_prompt:
+        if "literary fidelity checker" in system_prompt:
+            content = '{"decision":"accept","findings":[]}'
+        elif "fixed criteria" in system_prompt:
             content = json.dumps({"samples": [{"style": name, "scores": {
                 "fidelity": 4, "readability": 3, "economy": 3, "form": 4, "style": 3,
             }, "issues": []} for name in ("novel", "screenplay")]})
@@ -44,7 +46,27 @@ def test_fixed_forms_share_facts_but_have_separate_writing_requirements() -> Non
         assert "no minimum word count" in user
 
 
-def test_writing_benchmark_uses_three_calls_and_one_overwritten_record(monkeypatch) -> None:
+def test_fantasy_ending_uses_explicit_cultural_style_and_requires_completion():
+    scenario, workflow = load_scenario("fantasy_revenge_ending")
+    assert workflow.nodes == []
+    assert scenario["max_agents"] == 2
+    assert scenario["run_limits"] == {"rounds": 3, "actions": 6, "output_tokens": 1600}
+    assert scenario["expected"]["require_director_completion"] is True
+    profile = load_styles(scenario["styles"])[0]
+    assert profile["id"] == "fantasy_tragedy"
+    assert "西方奇幻" in profile["prompt"]
+    assert "不能补写" in profile["prompt"]
+
+
+def test_fantasy_ending_preflight_stays_within_authorized_calls(capsys):
+    assert main(["--scenario", "fantasy_revenge_ending", "--max-calls", "24",
+                 "--max-total-tokens", "60000", "--max-output-tokens", "3200", "--max-cost-usd", "0.10"]) == 0
+    output = capsys.readouterr().out
+    assert "about 22" in output
+    assert "Preflight only" in output
+
+
+def test_writing_benchmark_uses_five_calls_and_one_overwritten_record(monkeypatch) -> None:
     import app.eval_runner as runner
     result_dir = Path("data") / f"writing-eval-test-{uuid.uuid4().hex}"
     monkeypatch.setattr(runner, "RESULTS_DIR", result_dir)
@@ -53,10 +75,11 @@ def test_writing_benchmark_uses_three_calls_and_one_overwritten_record(monkeypat
     try:
         for _ in range(2):
             inner = Provider()
-            provider = BudgetedProvider(inner, EvalBudget(max_calls=3, max_total_tokens=12000, max_cost_usd=0.1))
+            provider = BudgetedProvider(inner, EvalBudget(max_calls=5, max_total_tokens=12000, max_cost_usd=0.1))
             artifact, path = asyncio.run(_execute_writing("writing_styles", scenario, provider, provider.budget, True, profiles))
-            assert artifact["usage"]["calls"] == 3
-            assert all(scenario["writing_source"] in prompt for prompt in inner.prompts)
+            assert artifact["usage"]["calls"] == 5
+            assert all(scenario["writing_source"] in prompt or
+                       json.loads(prompt).get("source") == scenario["writing_source"] for prompt in inner.prompts)
             assert [item["score"] for item in artifact["llm_judge"]["samples"]] == [85, 85]
         assert list(result_dir.iterdir()) == [path]
         record = path.read_text(encoding="utf-8")
@@ -66,7 +89,7 @@ def test_writing_benchmark_uses_three_calls_and_one_overwritten_record(monkeypat
         assert runner._latest_result("writing_styles")["benchmark"] == artifact["benchmark"]
         changed = deepcopy(profiles)
         changed[0]["criteria"]["style"] = "Changed standard."
-        provider = BudgetedProvider(Provider(), EvalBudget(max_calls=3, max_total_tokens=12000, max_cost_usd=0.1))
+        provider = BudgetedProvider(Provider(), EvalBudget(max_calls=5, max_total_tokens=12000, max_cost_usd=0.1))
         _, path = asyncio.run(_execute_writing("writing_styles", scenario, provider, provider.budget, True, changed))
         assert "change +" not in path.read_text(encoding="utf-8")
     finally:
@@ -114,5 +137,5 @@ def test_malformed_or_duplicate_judge_scores_remain_unavailable(rows) -> None:
 
 
 def test_writing_benchmark_preflight_does_not_call_a_model(capsys) -> None:
-    assert main(["--scenario", "writing_styles", "--judge", "--max-calls", "3"]) == 0
-    assert "about 3" in capsys.readouterr().out
+    assert main(["--scenario", "writing_styles", "--judge", "--max-calls", "5"]) == 0
+    assert "about 5" in capsys.readouterr().out

@@ -236,6 +236,12 @@ def test_e2e_run_events_metrics_report_compare(monkeypatch) -> None:  # type: ig
         assert memories.status_code == 200
         assert len(memories.json()) >= 1
 
+        async def report_model(model, system_prompt, user_prompt):
+            if "literary fidelity checker" in system_prompt:
+                return {"content": '{"decision":"accept","findings":[]}'}
+            return {"content": "The greeting was delivered, followed by the final message."}
+
+        monkeypatch.setattr("app.main.provider.chat", report_model)
         report = client.post(
             f"/api/runs/{run_id}/report",
             json={"mode": "briefing", "length": "short", "style_prompt": "formal"},
@@ -249,6 +255,7 @@ def test_e2e_run_events_metrics_report_compare(monkeypatch) -> None:  # type: ig
         )
         assert narrative.status_code == 200
         assert narrative.json()["mode"] == "narrative"
+        assert narrative.json()["fidelity"]["checks"][0]["decision"] == "accept"
         assert len(narrative.json()["report_markdown"]) > 20
 
         run_start_b = client.post("/api/workflows/wf_e2e_1/run", json={"input": {"task": "beta"}})

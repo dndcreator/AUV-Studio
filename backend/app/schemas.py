@@ -27,6 +27,7 @@ RunEventType = Literal[
     "context_pack_activated",
     "dynamic_state_updated",
     "dynamic_state_failed",
+    "action_checked",
 ]
 RunStatus = Literal["pending", "running", "waiting_human", "stopping", "stopped", "succeeded", "failed"]
 
@@ -322,6 +323,7 @@ class RunReportResponse(BaseModel):
     report_markdown: str
     sections: list[ReportSection] = Field(default_factory=list)
     evidence_index: list[str] = Field(default_factory=list)
+    fidelity: dict[str, Any] | None = None
 
 
 class PerformanceAlert(BaseModel):
@@ -411,6 +413,7 @@ class PlanCompileResponse(BaseModel):
     extracted: dict[str, Any] = Field(default_factory=dict)
     rationale: str = ""
     simulation_blueprint: dict[str, Any] = Field(default_factory=dict)
+    generation: dict[str, Any] = Field(default_factory=dict)
 
 
 class ModeContract(BaseModel):

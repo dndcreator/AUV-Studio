@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import uuid
 from typing import Any
@@ -10,7 +11,9 @@ import httpx
 
 from ..schemas import ExternalAgentContext, ExternalAgentTaskRequest, ExternalAgentTaskResponse
 from ..schemas import WorkflowNode
-from .entity_contracts import entity_action_contract
+from .entity_contracts import entity_action_contract, entity_detail_instruction as _detail_instruction
+from .action_output import external_action_output
+from .dynamic_state import EVIDENCE_KINDS
 from .provider import OpenAICompatibleProvider, build_provider_with_override
 from .tools import execute_tool
 
@@ -181,31 +184,36 @@ async def execute_node(
         api_key = str(node.config.get("model_api_key", "")).strip() or None
         system_prompt = resolve_value(str(node.config.get("system_prompt", "")), {**context, **node_input})
         user_prompt = resolve_value(str(node_input.get("prompt", node.config.get("user_prompt", ""))), {**context, **node_input})
-        user_prompt = _append_entity_context(
-            prompt=user_prompt,
-            node=node,
-            simulation=node_input.get("_simulation", context.get("_simulation", {})),
-            heading="Entity definition",
-            skip_behavior_if_in=system_prompt,
-        )
-        interaction_block = _render_interactions(node_input.get("_interactions", []))
-        if interaction_block:
-            user_prompt = f"{user_prompt}\n\nIncoming interactions:\n{interaction_block}"
-        env_block = _render_environment(node_input.get("_environment", context.get("_environment", {})))
-        memory_block = _render_memory(node_input.get("_memory", context.get("_memory", [])), limit=8)
-        simulation_block = _render_simulation(node_input.get("_simulation", context.get("_simulation", {})))
-        context_book_block = _render_context_pack(node_input.get("_context_pack", {}))
-        if env_block:
-            user_prompt = f"{user_prompt}\n\nEnvironment:\n{env_block}"
-        if simulation_block:
-            user_prompt = f"{user_prompt}\n\nSimulation State:\n{simulation_block}"
-        if context_book_block:
-            user_prompt = f"{user_prompt}\n\nActive Background:\n{context_book_block}"
-        if memory_block:
-            user_prompt = f"{user_prompt}\n\nMemory:\n{memory_block}"
-        global_guidance = str(node_input.get("_global_guidance", context.get("_global_guidance", ""))).strip()
-        if global_guidance:
-            user_prompt = f"{user_prompt}\n\nDirector guidance:\n{global_guidance}"
+        if node_input.get("_participant_turn") is True:
+            if (not isinstance(node_input.get("context"), dict) or not isinstance(node_input.get("role"), dict)
+                    or node_input["role"].get("node_id") != node.id):
+                raise ValueError("Canonical participant input must match the executing node.")
+        else:
+            user_prompt = _append_entity_context(
+                prompt=user_prompt,
+                node=node,
+                simulation=node_input.get("_simulation", context.get("_simulation", {})),
+                heading="Entity definition",
+                skip_behavior_if_in=system_prompt,
+            )
+            interaction_block = _render_interactions(node_input.get("_interactions", []))
+            if interaction_block:
+                user_prompt = f"{user_prompt}\n\nIncoming interactions:\n{interaction_block}"
+            env_block = _render_environment(node_input.get("_environment", context.get("_environment", {})))
+            memory_block = _render_memory(node_input.get("_memory", context.get("_memory", [])), limit=8)
+            simulation_block = _render_simulation(node_input.get("_simulation", context.get("_simulation", {})))
+            context_book_block = _render_context_pack(node_input.get("_context_pack", {}))
+            if env_block:
+                user_prompt = f"{user_prompt}\n\nEnvironment:\n{env_block}"
+            if simulation_block:
+                user_prompt = f"{user_prompt}\n\nSimulation State:\n{simulation_block}"
+            if context_book_block:
+                user_prompt = f"{user_prompt}\n\nActive Background:\n{context_book_block}"
+            if memory_block:
+                user_prompt = f"{user_prompt}\n\nMemory:\n{memory_block}"
+            global_guidance = str(node_input.get("_global_guidance", context.get("_global_guidance", ""))).strip()
+            if global_guidance:
+                user_prompt = f"{user_prompt}\n\nDirector guidance:\n{global_guidance}"
         effective_provider = provider
         if mode == "custom_endpoint":
             if not base_url:
@@ -490,13 +498,21 @@ def _render_simulation(simulation: Any) -> str:
         concepts = dynamic_state.get("concepts", {})
         values = dynamic_state.get("values", {})
         if isinstance(concepts, dict) and isinstance(values, dict) and concepts:
-            lines.append("Authoritative Dynamic State:")
+            lines.append("Recorded Dynamic State (source-linked, not independent verification):")
             for concept_id, concept in list(concepts.items())[:20]:
                 if not isinstance(concept, dict) or concept.get("status", "active") != "active":
                     continue
                 value = values.get(concept_id, {})
-                current = value.get("value") if isinstance(value, dict) else None
-                lines.append(f"- {concept_id}: {current}")
+                if not isinstance(value, dict):
+                    continue
+                kind = value.get("evidence_kind", "inference")
+                record = {
+                    "value": value.get("value"),
+                    "evidence_kind": kind if isinstance(kind, str) and kind in EVIDENCE_KINDS else "inference",
+                    "source_refs": value.get("source_refs", []),
+                    "confidence": value.get("confidence"),
+                }
+                lines.append(f"- {concept_id}: {json.dumps(record, ensure_ascii=False)}")
     if isinstance(evidence, dict):
         items = evidence.get("items", [])
         if isinstance(items, list) and items:
@@ -507,43 +523,6 @@ def _render_simulation(simulation: Any) -> str:
                     content = " ".join(str(item.get("content", "")).split())[:1200]
                     lines.append(f"- [{name}] {content}")
     return "\n".join(lines)
-
-
-def _detail_instruction(entity_type: str, simulation: Any) -> str:
-    if not isinstance(simulation, dict):
-        return ""
-    granularity = str(simulation.get("detail_granularity", "concise")).strip().lower()
-    if granularity != "detailed":
-        return ""
-    instructions = {
-        "individual": (
-            "When useful, show the person's specific words, actions, or private experience rather than only a summary. "
-            "Select particulars that matter to this response; silence or a brief action can be sufficient."
-        ),
-        "group": (
-            "Do not write the group as one person. When relevant, show differences in opinion, representative remarks, "
-            "or observable collective responses without requiring a catalogue of every subgroup."
-        ),
-        "organization": (
-            "Show the relevant institutional decision, procedure, or resource consequence concretely when needed. "
-            "Do not invent internal activity just to make the response longer."
-        ),
-        "environment": (
-            "Describe environmental particulars only where they affect perception, constraints, or available action. "
-            "Do not repeat scenery that has not meaningfully changed."
-        ),
-        "event": (
-            "Show what the event actually changes and its relevant immediate consequences. "
-            "Do not invent extra stages or aftershocks to fill space, or turn the event into a person."
-        ),
-        "artifact": (
-            "Show the artifact's relevant content, condition, or use when these affect the current interaction. "
-            "Do not repeat its full description or assign it a human inner life."
-        ),
-    }
-    return instructions.get(entity_type, "Show the concrete contribution at the detail level needed; do not pad the response.") + (
-        " These are optional detail choices, not a checklist or minimum length. The current Scene Contract takes precedence."
-    )
 
 
 async def _execute_external_agent(node: WorkflowNode, node_input: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -603,6 +582,7 @@ async def _execute_external_agent(node: WorkflowNode, node_input: dict[str, Any]
 
     if mode == "mock":
         return {
+            **(external_action_output({"text": f"External agent response: {enriched_prompt}"}) if node_input.get("_participant_turn") is True else {}),
             "agent_id": str(node.config.get("agent_id", "user_agent")),
             "status": "succeeded",
             "text": f"[mock external agent] {enriched_prompt}",
@@ -643,8 +623,10 @@ async def _execute_external_agent(node: WorkflowNode, node_input: dict[str, Any]
         raise ValueError("external agent response task_id does not match the request")
     if parsed.status != "succeeded":
         raise ValueError(f"external agent failed: {parsed.errors}")
-    text = str(parsed.output.get("text", ""))
+    text = parsed.output.get("text", "")
+    action = external_action_output(parsed.output) if node_input.get("_participant_turn") is True else {}
     return {
+        **action,
         "agent_id": str(node.config.get("agent_id", "user_agent")),
         "status": parsed.status,
         "text": text,

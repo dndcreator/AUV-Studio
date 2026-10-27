@@ -19,7 +19,11 @@ def narrative_prompts(
         "requested, follow its conventions. Preserve established actors, consequential actions, causality, and outcomes; "
         "actual interactions take precedence over a contradictory summary. You may shape narration, transitions, and "
         "non-consequential expressive detail, but do not invent major events, secret knowledge, or a different ending "
-        "to make the work more exciting. Do not mention nodes, prompts, tokens, traces, Director instructions, "
+        "to make the work more exciting. Preserve the last established boundary: an unanswered question, undecided "
+        "choice, pending request or unaccepted offer stays unresolved. Do not add a reply, agreement, completed "
+        "transaction or departure merely to finish the narrative arc. A finished piece of writing may end with an "
+        "unfinished interaction. Extra dialogue that resolves a pending decision is a consequential event, not "
+        "expressive detail. Do not mention nodes, prompts, tokens, traces, Director instructions, "
         "simulation machinery, evidence labels, or the adaptation process. Detail is selective, not a checklist. "
         "Do not pad the text, repeat beats, or explain emotions already apparent from the scene."
     )

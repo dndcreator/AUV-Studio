@@ -77,7 +77,7 @@ class _Client:
         return _Response(self.response)
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 404, 408, 429, 500, 503])
+@pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 408, 429, 500, 503])
 def test_provider_only_retries_recoverable_http_failures(monkeypatch, status) -> None:
     calls = []
     delays = []
@@ -93,9 +93,10 @@ def test_provider_only_retries_recoverable_http_failures(monkeypatch, status) ->
     monkeypatch.setattr(provider_module.httpx, "AsyncClient", Client)
     monkeypatch.setattr(provider_module.asyncio, "sleep", sleep)
     provider = OpenAICompatibleProvider("http://localhost:1234/v1", "", 10, 2)
-    with pytest.raises(ProviderError, match=f"HTTP {status}"):
+    with pytest.raises(ProviderError, match=f"HTTP {status}") as exc:
         asyncio.run(provider.chat("local", "system", "request"))
     recoverable = status in {408, 429} or status >= 500
+    assert exc.value.code == "http_error" and exc.value.status_code == status
     assert len(calls) == (3 if recoverable else 1)
     assert delays == ([1, 2] if recoverable else [])
 

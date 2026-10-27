@@ -27,4 +27,9 @@ describe("canvas presentation", () => {
     expect(presentCanvasNodes(nodes, events)[0].data.displayStatus).toBe("failed");
     expect(presentCanvasNodes(nodes, [])[0].data.displayStatus).toBe("idle");
   });
+
+  it("keeps the node running while candidate consistency checks are recorded", () => {
+    const result = presentCanvasNodes(nodes, [event(1, "running"), event(2, "action_checked")]);
+    expect(result[0].data.displayStatus).toBe("running");
+  });
 });

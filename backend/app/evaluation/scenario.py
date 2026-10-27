@@ -22,6 +22,11 @@ def load_scenario(name: str) -> tuple[dict[str, Any], WorkflowDefinition]:
     if not path.is_file():
         raise FileNotFoundError(f"evaluation scenario not found: {name}")
     raw = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict) or not isinstance(raw.get("workflow"), dict):
+    if not isinstance(raw, dict):
+        raise ValueError(f"invalid evaluation scenario: {name}")
+    if isinstance(raw.get("plan_text"), str) and raw["plan_text"].strip() and "workflow" not in raw:
+        # Preflight placeholder only. The real workflow must come from the configured model.
+        return raw, WorkflowDefinition(id=f"eval_{name}", name=str(raw.get("title", name)), nodes=[], edges=[])
+    if not isinstance(raw.get("workflow"), dict):
         raise ValueError(f"invalid evaluation scenario: {name}")
     return raw, WorkflowDefinition.model_validate(raw["workflow"])

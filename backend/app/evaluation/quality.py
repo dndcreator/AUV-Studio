@@ -4,7 +4,10 @@ import json
 import re
 from collections import Counter
 from typing import Any
+from pydantic import ValidationError
+from ..execution.action_output import ParticipantAction
 from .behavior import evaluate_behavior
+from ..execution.completion import goal_completed
 
 
 def evaluate_run(
@@ -25,9 +28,9 @@ def evaluate_run(
             continue
         action = str(output.get("action") or output.get("content") or "").strip()
         public_update = str(output.get("shared_effect_claim") or output.get("public_state_update") or "").strip()
-        proposal = str(output.get("intent") or output.get("proposal_summary") or "").strip()
-        participation = str(output.get("participation", "act"))
-        if participation not in {"act", "observe", "wait"} or (participation == "act" and (not action or not proposal)):
+        try:
+            ParticipantAction.model_validate(output)
+        except ValidationError:
             contract_failures += 1
         if action:
             actions.append({"node_id": str(item.get("node_id")), "action": action, "public_state_update": public_update, "turn_delta": str(output.get("turn_delta", ""))})
@@ -46,8 +49,8 @@ def evaluate_run(
     }
     if expected.get("require_director_completion"):
         audits = [event for event in events or [] if event.get("event") == "episode_audited"]
-        last_decision = str((audits[-1].get("payload") or {}).get("decision", "")) if audits else ""
-        checks["director_confirmed_completion"] = last_decision == "stop"
+        last = (audits[-1].get("payload") or {}) if audits else {}
+        checks["director_confirmed_completion"] = goal_completed(last)
     if expected.get("require_scene_control"):
         actor_runs = [item for item in node_runs if item.get("node_id") in actor_ids and item.get("status") == "succeeded"]
         audits = [event.get("payload", {}) for event in events or [] if event.get("event") == "episode_audited"]

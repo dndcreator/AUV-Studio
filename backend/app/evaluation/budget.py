@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict, dataclass
 from typing import Any
+
+from ..execution.provider import ProviderError
 
 
 class EvalBudgetExceeded(RuntimeError):
@@ -35,14 +38,36 @@ class EvalUsage:
 
 
 class BudgetedProvider:
-    def __init__(self, provider: Any, budget: EvalBudget) -> None:
+    def remaining_budget(self) -> dict[str, Any]:
+        return {"remaining_calls": max(0, self.budget.max_calls - self.usage.calls),
+                "remaining_tokens": max(0, self.budget.max_total_tokens - self.usage.input_tokens - self.usage.output_tokens),
+                "remaining_estimated_cost_usd": max(0, round(self.budget.max_cost_usd - self.usage.estimated_cost_usd(self.budget), 6))}
+
+    def __init__(self, provider: Any, budget: EvalBudget, *, retry_count: int = 0) -> None:
         self.provider = provider
         self.budget = budget
         self.usage = EvalUsage()
+        self.retry_count = max(0, min(retry_count, 2))
+        self.retries: list[dict[str, Any]] = []
+        self.usage_by_kind: dict[str, dict[str, int]] = {}
+        # Count each physical attempt here instead of hiding transport retries inside it.
+        if hasattr(provider, "retry_count"):
+            provider.retry_count = 0
         if hasattr(provider, "max_output_tokens"):
             provider.max_output_tokens = budget.max_output_tokens_per_call
 
     async def chat(self, model: str, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        for attempt in range(self.retry_count + 1):
+            try:
+                return await self._chat_once(model, system_prompt, user_prompt)
+            except ProviderError as exc:
+                if not exc.retryable or attempt >= self.retry_count:
+                    raise
+                self.retries.append({"after_call": self.usage.calls, "code": exc.code, "status_code": exc.status_code})
+                await asyncio.sleep(2**attempt)
+        raise AssertionError("unreachable retry state")
+
+    async def _chat_once(self, model: str, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         estimated_input = _estimate_tokens(system_prompt) + _estimate_tokens(user_prompt)
         self._check_before_call(estimated_input)
         self.usage.calls += 1
@@ -50,20 +75,29 @@ class BudgetedProvider:
             response = await self.provider.chat(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
         except Exception:
             # Failed requests may still be billed. Record the conservative reserved amount.
-            self.usage.input_tokens += estimated_input
-            self.usage.output_tokens += self.budget.max_output_tokens_per_call
+            self._record_usage(system_prompt, estimated_input, self.budget.max_output_tokens_per_call, failed=True)
             raise
         raw = response.get("raw", {}) if isinstance(response, dict) else {}
         raw_usage = raw.get("usage", {}) if isinstance(raw, dict) else {}
         input_tokens = _usage_int(raw_usage, "prompt_tokens", "input_tokens") or estimated_input
         output_tokens = _usage_int(raw_usage, "completion_tokens", "output_tokens") or _estimate_tokens(str(response.get("content", "")))
-        self.usage.input_tokens += input_tokens
-        self.usage.output_tokens += output_tokens
+        self._record_usage(system_prompt, input_tokens, output_tokens)
         if self.usage.input_tokens + self.usage.output_tokens > self.budget.max_total_tokens:
             raise EvalBudgetExceeded("evaluation token budget exceeded")
         if self.usage.estimated_cost_usd(self.budget) > self.budget.max_cost_usd:
             raise EvalBudgetExceeded("evaluation cost budget exceeded")
         return response
+
+    def _record_usage(self, system: str, input_tokens: int, output_tokens: int, *, failed: bool = False) -> None:
+        categories = {"action consistency checker": "action_check", "literary fidelity checker": "writing_check",
+                      "process architect": "planning", "route attention": "routing", "continuity auditor": "audit",
+                      "autonomous participant": "actor", "finished literary work": "writing"}
+        kind = next((kind for marker, kind in categories.items() if marker in system), "other")
+        row = self.usage_by_kind.setdefault(kind, {"calls": 0, "input_tokens": 0, "output_tokens": 0, "failed": 0})
+        for key, value in {"calls": 1, "input_tokens": input_tokens, "output_tokens": output_tokens, "failed": int(failed)}.items():
+            row[key] += value
+        self.usage.input_tokens += input_tokens
+        self.usage.output_tokens += output_tokens
 
     def _check_before_call(self, estimated_input: int) -> None:
         if self.usage.calls >= self.budget.max_calls:

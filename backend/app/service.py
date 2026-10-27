@@ -16,7 +16,7 @@ from .models import MemoryRecord, NodeRunRecord, RunEventRecord, RunRecord, Work
 from .observability import perf_tracker
 from .mode_contracts import MODE_CONTRACTS
 from .model_config_service import apply_stored_model_config, get_model_config, save_model_config, test_model_config
-from .narrative import narrative_prompts
+from .narrative_fidelity import generate_grounded_narrative
 from .plan_compiler import compile_workflow_from_plan
 from .schemas import (
     DirectorCapability,
@@ -589,6 +589,7 @@ def get_run_checkpoints(db: Session, run_id: str, limit: int = 80) -> RunCheckpo
         .filter(
             RunEventRecord.run_id == run_id,
             RunEventRecord.event.in_(["succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited"]),
+            RunEventRecord.node_id != "run_control",
         )
         .order_by(RunEventRecord.seq.desc())
         .limit(max(1, min(limit, 300)))
@@ -851,22 +852,18 @@ async def generate_run_report(
             {readable_source}
             """
         ).strip()
+        llm = await provider.chat(model="", system_prompt=writer_system, user_prompt=writer_user)
+        markdown = str(llm.get("content", "")).strip()
+        if not markdown:
+            markdown = _fallback_markdown(
+                title=title, mode=report_mode, run_detail=run_detail, metrics=metrics,
+                evidence=evidence_lines[:20], readable_source=readable_source,
+            )
+        fidelity = None
     else:
-        writer_system, writer_user = narrative_prompts(
-            source=readable_source, style=style, language=output_language,
+        markdown, fidelity = await generate_grounded_narrative(
+            provider, source=readable_source, style=style, language=output_language,
             audience=audience, length=request.length,
-        )
-
-    llm = await provider.chat(model="", system_prompt=writer_system, user_prompt=writer_user)
-    markdown = str(llm.get("content", "")).strip()
-    if not markdown:
-        markdown = _fallback_markdown(
-            title=title,
-            mode=report_mode,
-            run_detail=run_detail,
-            metrics=metrics,
-            evidence=evidence_lines[:20],
-            readable_source=readable_source,
         )
 
     sections = _extract_sections(markdown)
@@ -879,6 +876,7 @@ async def generate_run_report(
         report_markdown=markdown if markdown.lstrip().startswith("# ") else f"# {title}\n\n{markdown}",
         sections=sections,
         evidence_index=evidence_index,
+        fidelity=fidelity,
     )
 
 
@@ -956,9 +954,12 @@ def _readable_output(output: object) -> str:
 
 def _build_readable_report_source(run_detail: RunDetail, workflow: WorkflowDefinition | None) -> str:
     node_map = {node.id: node for node in workflow.nodes} if workflow else {}
+    continuous = bool(workflow and workflow.environment.simulation.get("execution_model") == "continuous")
     interactions: list[str] = []
     final_outputs: list[str] = []
     for node_run in run_detail.node_runs:
+        if node_run.status != "succeeded":
+            continue
         text = _readable_output(node_run.output)
         if not text:
             continue
@@ -969,7 +970,9 @@ def _build_readable_report_source(run_detail: RunDetail, workflow: WorkflowDefin
         config = node.config if node else {}
         label = str(config.get("entity_name") or config.get("role") or node_run.node_id)
         if node_run.node_id.startswith("summary_"):
-            final_outputs.append(text)
+            # Continuous summaries are derived prose, not another source of simulated facts.
+            if not continuous:
+                final_outputs.append(text)
         else:
             interactions.append(f"{label}:\n{text}")
 
@@ -1111,7 +1114,7 @@ def _extract_sections(markdown: str) -> list[ReportSection]:
 
 def _default_report_title(run_id: str, mode: str) -> str:
     if mode in {"story", "narrative"}:
-        return f"Simulation Narrative - {run_id}"
+        return "Simulation Narrative"
     return f"Simulation Briefing - {run_id}"
 
 

@@ -2,12 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..schemas import WorkflowEdge
+from ..schemas import WorkflowEdge, WorkflowNode
 from .graph import build_interaction_message, should_follow_condition
 
 
 PUBLIC_FIELDS = ("round", "action_index", "event_seq", "node_id", "actor", "participation", "action")
 PRIVATE_FIELDS = ("intent", "observation", "self_update", "turn_delta", "shared_effect_claim")
+
+
+def participant_roster(nodes: list[WorkflowNode], node_id: str, edges: list[WorkflowEdge]) -> list[dict[str, str]]:
+    visible = {node_id} | {edge.source for edge in edges if edge.target == node_id} | {
+        edge.target for edge in edges if edge.source == node_id}
+    return [{"node_id": node.id, "name": str(node.config.get("entity_name") or node.id),
+             **({"role": str(node.config.get("role", "custom"))} if node.id == node_id else {})}
+            for node in nodes if not edges or node.id in visible]
 
 
 def delivery_receipts(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:

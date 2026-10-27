@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import copy
+import pytest
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -31,6 +33,8 @@ class SequenceProvider:
         self.index = 0
 
     async def chat(self, model: str, system_prompt: str, user_prompt: str) -> dict:
+        if "action consistency checker" in system_prompt:
+            return {"content": '{"decision":"accept","reason":"Offline fixture.","scope":{"self_owned":true,"public_only":true},"findings":[]}'}
         output = self.outputs[min(self.index, len(self.outputs) - 1)]
         self.index += 1
         return {"content": output, "raw": {"ok": True}}
@@ -94,6 +98,44 @@ def test_state_coder_discovers_arbitrary_concepts_without_domain_schema() -> Non
     assert set(updated["concepts"]) == {"unpublished_methodological_risk"}
     assert updated["values"]["unpublished_methodological_risk"]["value"] == "active"
     assert updated["history"][0]["source_refs"] == [_source()]
+    assert updated["values"]["unpublished_methodological_risk"]["status"] == "recorded"
+    assert updated["values"]["unpublished_methodological_risk"]["evidence_kind"] == "inference"
+
+
+@pytest.mark.parametrize("evidence_kind", ["claim", "observation", "action", "inference"])
+def test_source_linked_values_record_evidence_kind_without_certifying_truth(evidence_kind):
+    proposal = _proposal("reported_signature", value=True, value_type="scalar")
+    proposal["state_ops"][0].update(evidence_kind=evidence_kind, status="confirmed", confidence=1)
+    updated, _ = apply_dynamic_state_proposal(init_dynamic_state({"enabled": True}), proposal, seq=1,
+        source_actions=[{**_source(), "action": "I claim the king signed; there is no independent confirmation."}], round_index=1)
+    value = updated["values"]["reported_signature"]
+    assert value["status"] == "recorded" and value["evidence_kind"] == evidence_kind
+    assert value["source_refs"] == [_source()]
+    assert updated["history"][-1]["state_ops"][0]["evidence_kind"] == evidence_kind
+
+
+@pytest.mark.parametrize("evidence_kind", ["confirmed", "verified", None, {}, 1])
+def test_invalid_evidence_kind_cannot_overwrite_an_existing_value(evidence_kind):
+    state, _ = apply_dynamic_state_proposal(init_dynamic_state({"enabled": True}), _proposal("rule"), seq=1,
+        source_actions=[_source()], round_index=1)
+    original = copy.deepcopy(state["values"]["rule"])
+    proposal = _proposal("rule", value="invented")
+    proposal["schema_ops"] = []
+    proposal["state_ops"][0]["evidence_kind"] = evidence_kind
+    updated, result = apply_dynamic_state_proposal(state, proposal, seq=2, source_actions=[_source()], round_index=2)
+    assert updated["values"]["rule"] == original
+    assert any(row["reason"] == "invalid_evidence_kind" for row in result["rejected"])
+
+
+def test_old_confirmed_metadata_is_not_treated_as_truth_in_new_projections():
+    state, _ = apply_dynamic_state_proposal(init_dynamic_state({"enabled": True}), _proposal("rule"), seq=1,
+        source_actions=[_source()], round_index=1)
+    state["values"]["rule"]["status"] = "confirmed"
+    state["values"]["rule"].pop("evidence_kind")
+    view = compact_dynamic_state(state)
+    assert view["values"]["rule"]["status"] == "recorded"
+    assert view["values"]["rule"]["evidence_kind"] == "inference"
+    assert state["values"]["rule"]["status"] == "confirmed"  # Historical input is not rewritten.
 
 
 def test_state_coder_enforces_relevance_and_growth_budgets() -> None:
@@ -391,7 +433,7 @@ def test_continuous_engine_applies_state_patch_inside_existing_director_audit() 
             }
         ),
     )
-    state_patch = _proposal("unresolved_sample_bias", source=_source("agent_1", 1, 4))
+    state_patch = _proposal("unresolved_sample_bias", source=_source("agent_1", 1, 5))
     provider = SequenceProvider(
         [
             '{"active_node_ids":["agent_1"],"reason":"relevant"}',
@@ -401,6 +443,8 @@ def test_continuous_engine_applies_state_patch_inside_existing_director_audit() 
             json.dumps(
                 {
                     "decision": "stop",
+                    "task_complete": True,
+                    "completion_reason": "The fixture goal is reached.",
                     "guidance": "",
                     "reason": "finding established",
                     "shared_state_summary": "A sample bias constrains the result.",

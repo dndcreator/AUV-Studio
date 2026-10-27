@@ -49,6 +49,28 @@ describe("api client", () => {
     expect(error.message).toBe("Field required; Invalid URL");
   });
 
+  it("shows a readable compilation error while retaining structured diagnostics", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 502,
+      text: async () => JSON.stringify({ detail: { code: "output_truncated", message: "Plan output was truncated.",
+        diagnostics: [{ finish_reason: "length", attempt: 2 }] } }) }));
+    const error = await api.compileTemplate({ plan_text: "A fantasy opening", mode: "auto", max_agents: 2, language: "zh" }).catch((value) => value);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.message).toBe("Plan output was truncated.");
+    expect(error.code).toBe("output_truncated");
+    expect(error.diagnostics).toEqual([{ finish_reason: "length", attempt: 2 }]);
+  });
+
+  it("does not treat rejected literary adaptations as successful reports", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 502,
+      text: async () => JSON.stringify({ detail: { code: "narrative_fidelity_failed",
+        message: "Literary adaptation was not published.", diagnostics: { attempts: 2 } } }) }));
+    const error = await api.generateReport("run_1", { mode: "narrative", length: "short" }).catch((value) => value);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.message).toBe("Literary adaptation was not published.");
+    expect(error.code).toBe("narrative_fidelity_failed");
+    expect(error.diagnostics).toEqual({ attempts: 2 });
+  });
+
   it("polls lightweight status and forwards cancellation without downloading node history", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ run_id: "run_1", status: "running" }) });
     vi.stubGlobal("fetch", fetchMock);

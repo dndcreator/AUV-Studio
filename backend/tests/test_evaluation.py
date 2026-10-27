@@ -72,9 +72,9 @@ def test_deterministic_quality_checks_action_contract_and_participation() -> Non
     detail = {
         "status": "succeeded",
         "node_runs": [
-            {"node_id": "lin", "status": "succeeded", "output": {"action": "Lin rejects the launch.", "proposal_summary": "delay", "public_state_update": "Launch challenged"}},
-            {"node_id": "chen", "status": "succeeded", "output": {"action": "Chen proposes a limited rollout.", "proposal_summary": "limit scope", "public_state_update": "Compromise proposed"}},
-            {"node_id": "lin", "status": "succeeded", "output": {"action": "Lin accepts after assigning a check.", "proposal_summary": "verify", "public_state_update": "Check assigned"}},
+            {"node_id": "lin", "status": "succeeded", "output": {"participation": "act", "action": "Lin rejects the launch.", "intent": "delay", "shared_effect_claim": "Launch challenged"}},
+            {"node_id": "chen", "status": "succeeded", "output": {"participation": "act", "action": "Chen proposes a limited rollout.", "intent": "limit scope", "shared_effect_claim": "Compromise proposed"}},
+            {"node_id": "lin", "status": "succeeded", "output": {"participation": "act", "action": "Lin accepts after assigning a check.", "intent": "verify", "shared_effect_claim": "Check assigned"}},
         ],
     }
     result = evaluate_run(
@@ -89,9 +89,9 @@ def test_deterministic_quality_detects_unfinished_director_boundary() -> None:
     detail = {
         "status": "succeeded",
         "node_runs": [
-            {"node_id": "lin", "status": "succeeded", "output": {"action": "Lin proposes a delay.", "proposal_summary": "delay", "public_state_update": "Delay proposed"}},
-            {"node_id": "chen", "status": "succeeded", "output": {"action": "Chen counters with a gate.", "proposal_summary": "gate", "public_state_update": "Gate proposed"}},
-            {"node_id": "lin", "status": "succeeded", "output": {"action": "Lin amends the gate.", "proposal_summary": "amend", "public_state_update": "Terms remain open"}},
+            {"node_id": "lin", "status": "succeeded", "output": {"participation": "act", "action": "Lin proposes a delay.", "intent": "delay", "shared_effect_claim": "Delay proposed"}},
+            {"node_id": "chen", "status": "succeeded", "output": {"participation": "act", "action": "Chen counters with a gate.", "intent": "gate", "shared_effect_claim": "Gate proposed"}},
+            {"node_id": "lin", "status": "succeeded", "output": {"participation": "act", "action": "Lin amends the gate.", "intent": "amend", "shared_effect_claim": "Terms remain open"}},
         ],
     }
     events = [{"event": "episode_audited", "payload": {"decision": "continue"}}]
@@ -157,6 +157,16 @@ def test_cli_defaults_to_preflight_without_model_calls(capsys) -> None:  # type:
     output = capsys.readouterr().out
     assert "Preflight only" in output
     assert "hard limit" in output
+    assert "action checks" in output
+
+
+def test_eval_preflight_rejects_unbudgeted_action_checks_before_execution(monkeypatch, capsys):
+    async def execute(*args):
+        pytest.fail("Insufficient call budget must not start the model run")
+
+    monkeypatch.setattr("app.eval_runner._execute", execute)
+    assert main(["--scenario", "roleplay_basic", "--execute", "--max-calls", "12"]) == 2
+    assert "expected calls exceed" in capsys.readouterr().err
 
 
 def test_cli_rejects_unsafe_budget(capsys) -> None:  # type: ignore[no-untyped-def]
@@ -190,10 +200,13 @@ def test_eval_executes_isolated_end_to_end_with_fake_provider(monkeypatch) -> No
             self.action_index = 0
 
         async def chat(self, model: str, system_prompt: str, user_prompt: str) -> dict:
-            if "route attention" in system_prompt:
+            if "action consistency checker" in system_prompt:
+                content = '{"decision":"accept","reason":"Offline fixture.","scope":{"self_owned":true,"public_only":true},"findings":[]}'
+            elif "route attention" in system_prompt:
                 content = '{"active_node_ids":["lin","chen"],"reason":"both own the conflict"}'
             elif "continuity auditor" in system_prompt:
-                content = json.dumps({"decision": "stop" if self.action_index >= 4 else "continue", "reason": "Verify the compromise after both responses."})
+                content = json.dumps({"decision": "stop" if self.action_index >= 4 else "continue", "task_complete": self.action_index >= 4,
+                                      "completion_reason": "The compromise was verified.", "reason": "Verify the compromise after both responses."})
             elif "Record only the concrete outcome" in system_prompt:
                 content = "They agree to a limited launch after an assigned verification check."
             else:
@@ -202,9 +215,9 @@ def test_eval_executes_isolated_end_to_end_with_fake_provider(monkeypatch) -> No
                 content = (
                     '{"participation":"act","action":"'
                     + actor
-                    + f' makes concrete move {self.action_index}.","proposal_summary":"advance negotiation",'
-                    + '"public_state_update":"The negotiation gains a concrete condition.",'
-                    + '"private_state_update":"resolve changes","boundary_signal":"ready"}'
+                    + f' makes concrete move {self.action_index}.","intent":"advance negotiation",'
+                    + '"shared_effect_claim":"The negotiation gains a concrete condition.",'
+                    + '"self_update":"resolve changes","episode_signal":"ready"}'
                 )
             return {"content": content, "raw": {"usage": {"prompt_tokens": 80, "completion_tokens": 30}}}
 
@@ -224,13 +237,17 @@ def test_eval_executes_isolated_end_to_end_with_fake_provider(monkeypatch) -> No
                 "roleplay_basic",
                 scenario,
                 workflow,
-                EvalBudget(max_calls=12, max_total_tokens=20_000, max_output_tokens_per_call=500, max_cost_usd=1),
+                EvalBudget(max_calls=16, max_total_tokens=40_000, max_output_tokens_per_call=500, max_cost_usd=1),
                 False,
             )
         )
         assert artifact["run"]["status"] == "succeeded"
         assert artifact["deterministic_evaluation"]["score"] == 100
-        assert artifact["usage"]["calls"] <= 12
+        assert artifact["usage"]["calls"] <= 16
+        assert artifact["consistency"] == {"checked": 4, "not_accepted": []}
+        assert artifact["diagnostics"]["usage_by_kind"]["action_check"]["calls"] == 4
+        assert artifact["diagnostics"]["last_audits"][-1]["task_complete"] is True
+        assert artifact["completion"]["status"] == "completed"
         assert result_path.name == "roleplay_basic.md"
         record = result_path.read_text(encoding="utf-8")
         assert "Simulation" in record

@@ -5,6 +5,8 @@ import json
 import re
 from typing import Any
 
+EVIDENCE_KINDS = frozenset({"claim", "observation", "action", "inference"})
+
 
 _CONCEPT_ID_RE = re.compile(r"[^a-z0-9_]+")
 
@@ -32,7 +34,7 @@ def dynamic_state_enabled(state: dict[str, Any]) -> bool:
     return isinstance(dynamic, dict) and bool(dynamic.get("enabled", False))
 
 
-def state_coder_audit_clause(actions: list[dict[str, Any]]) -> str:
+def state_coder_audit_clause(actions: list[dict[str, Any]], *, actions_in_audit: bool = False) -> str:
     return (
         "As a separate State Coder pass in this same response, inspect UNCODED ACTIONS and propose only the smallest "
         "persistent state needed to constrain future behavior. Do not use predefined domain concepts. Create a concept only "
@@ -41,13 +43,21 @@ def state_coder_audit_clause(actions: list[dict[str, Any]]) -> str:
         "Turn Delta, Scene Contract, and stagnation verdicts are runtime controls, never durable facts; ignore them as evidence. "
         "Reuse existing concepts. Private knowledge requires visibility=private and owner_id set to the exact source node_id. "
         "Every schema and state operation must cite one or more exact source_refs copied from UNCODED ACTIONS; never "
-        "promote an unsupported claim into state. scope, owner_id, visibility, and value_type are immutable after creation. "
+        "promote an unsupported claim into an established fact. scope, owner_id, visibility, and value_type are immutable after creation. "
         "Put the proposal in state_patch with "
         "schema_ops and state_ops. Upserts require id, description, scope, owner_id, value_type, visibility, retention, "
         "future_relevance, reason, and source_refs. retention is an object with mode persistent|until_resolved|rounds; "
-        "rounds also requires ttl_rounds. State sets require concept_id, value, confidence, reason, and source_refs. Use "
+        "rounds also requires ttl_rounds. State sets require concept_id, value, confidence, reason, source_refs and "
+        "evidence_kind (claim|observation|action|inference). A claim records that the source participant asserted "
+        "something, not that it happened; preserve the speaker and uncertainty in the value/description. "
+        "Observation is a participant's perception; inference is your interpretation; action is what the accepted "
+        "actor itself actually did, not every outcome it claimed. All writes are recorded, never automatically "
+        "verified or confirmed. Confidence is not independent proof. Use "
         "empty arrays when nothing deserves persistent state.\n\n"
-        f"UNCODED ACTIONS:\n{json.dumps(actions, ensure_ascii=False, default=str)}\n\n"
+        + ("UNCODED ACTION REFS (read their full text in ACTUAL NODE OUTPUTS above):\n"
+           + json.dumps([{key: row[key] for key in ("node_id", "action_index", "event_seq") if key in row}
+                         for row in actions], ensure_ascii=False) if actions_in_audit
+           else f"UNCODED ACTIONS:\n{json.dumps(actions, ensure_ascii=False, default=str)}") + "\n\n"
     )
 
 
@@ -63,7 +73,7 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         "new_actions": actions,
     }
     return (
-        "You are the State Coder for an open-ended distributed simulation. Maintain only the smallest authoritative set "
+        "You are the State Coder for an open-ended distributed simulation. Maintain only the smallest source-linked set "
         "of concepts whose current values can change a future participant's valid action, decision, interpretation, or "
         "deliverable. There is no domain schema: discover concepts from the actual process. Do not store prose, style, "
         "ordinary dialogue, transient gestures, duplicate facts, or details useful only for retelling the current action. "
@@ -77,7 +87,10 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         "id, description, scope(global|entity), owner_id, value_type(scalar|text|list|object), visibility(global|private), "
         "retention, future_relevance, reason, and source_refs. retention must be "
         '{"mode":"persistent|until_resolved|rounds","ttl_rounds":3}. Each state operation requires concept_id, value '
-        "for set, confidence, reason, and source_refs. Emit empty arrays when nothing deserves persistent state.\n\n"
+        "for set, confidence, reason, source_refs and evidence_kind (claim|observation|action|inference). "
+        "Preserve attribution: claims/observations/inferences are not independently verified facts. An accepted "
+        "action is evidence of the actor's own contribution, not proof of another actor's response. "
+        "Writes mean recorded, not confirmed; confidence is not verification. Emit empty arrays when nothing deserves persistent state.\n\n"
         f"ROUND: {round_index}\n"
         f"CONTEXT:\n{json.dumps(context, ensure_ascii=False, default=str)}\n\n"
         "OUTPUT SHAPE:\n"
@@ -86,7 +99,7 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         '"visibility":"global|private","retention":{"mode":"until_resolved"},"future_relevance":"",'
         '"reason":"","source_refs":[{"node_id":"","action_index":1,"event_seq":1}]}],'
         '"state_ops":[{"op":"set|unset","concept_id":"concept_id","value":null,'
-        '"confidence":0.0,"reason":"","source_refs":[{"node_id":"","action_index":1,"event_seq":1}]}]}'
+        '"confidence":0.0,"evidence_kind":"inference","reason":"","source_refs":[{"node_id":"","action_index":1,"event_seq":1}]}]}'
     )
 
 
@@ -263,6 +276,10 @@ def apply_dynamic_state_proposal(
             rejected.append({"kind": "state", "id": concept_id, "reason": "missing_reason"})
             continue
         value = raw.get("value")
+        evidence_kind = raw.get("evidence_kind", "inference")
+        if not isinstance(evidence_kind, str) or evidence_kind not in EVIDENCE_KINDS:
+            rejected.append({"kind": "state", "id": concept_id, "reason": "invalid_evidence_kind"})
+            continue
         if not _value_matches_type(value, str(concept.get("value_type", "text"))):
             rejected.append({"kind": "state", "id": concept_id, "reason": "value_type_mismatch"})
             continue
@@ -274,13 +291,14 @@ def apply_dynamic_state_proposal(
             "updated_seq": seq,
             "source_node_ids": sources,
             "source_refs": source_refs,
-            "status": "confirmed",
+            "status": "recorded",
+            "evidence_kind": evidence_kind,
         }
         concept["last_updated_round"] = round_index
         retention = concept.get("retention", {})
         if isinstance(retention, dict) and retention.get("mode") == "rounds":
             retention["expires_round"] = round_index + int(retention.get("ttl_rounds", 1))
-        accepted_state.append({"op": "set", "concept_id": concept_id, "source_refs": source_refs})
+        accepted_state.append({"op": "set", "concept_id": concept_id, "evidence_kind": evidence_kind, "source_refs": source_refs})
 
     accepted_value_ids = {
         str(operation.get("concept_id", ""))
@@ -389,6 +407,11 @@ def _normalize_dynamic_state(raw: Any) -> dict[str, Any]:
     baseline["schema_version"] = _bounded_int(source.get("schema_version"), 0, 0, 1_000_000)
     baseline["concepts"] = copy.deepcopy(source.get("concepts", {})) if isinstance(source.get("concepts", {}), dict) else {}
     baseline["values"] = copy.deepcopy(source.get("values", {})) if isinstance(source.get("values", {}), dict) else {}
+    for value in baseline["values"].values():
+        if isinstance(value, dict):
+            value["status"] = "recorded"
+            evidence_kind = value.get("evidence_kind", "inference")
+            value["evidence_kind"] = evidence_kind if isinstance(evidence_kind, str) and evidence_kind in EVIDENCE_KINDS else "inference"
     baseline["history"] = copy.deepcopy(source.get("history", [])) if isinstance(source.get("history", []), list) else []
     return baseline
 

@@ -9,7 +9,8 @@ from app.db import Base
 from app.execution.engine import WorkflowEngine
 from app.execution.graph import WorkflowValidationError, validate_workflow
 from app.execution.memory import should_write_memory
-from app.execution.simulation_loop import action_instruction, build_loop_policy, normalize_action_output
+from app.execution.simulation_loop import action_instruction, build_loop_policy
+from app.execution.action_output import normalize_action_output
 from app.observability import perf_tracker
 from app.queue_manager import RunQueueManager
 from app.schemas import EnvironmentSpec, InteractionSpec, NodePosition, RunReportRequest, RunRequest, TemplateCreateRequest, WorkflowDefinition, WorkflowEdge, WorkflowNode
@@ -29,6 +30,8 @@ from app.service import (
 
 class FakeProvider:
     async def chat(self, model: str, system_prompt: str, user_prompt: str) -> dict:
+        if "literary fidelity checker" in system_prompt:
+            return {"content": '{"decision":"accept","findings":[]}'}
         return {"content": f"{model}:{user_prompt}", "raw": {"ok": True}}
 
 
@@ -40,6 +43,8 @@ class CapturingProvider:
     async def chat(self, model: str, system_prompt: str, user_prompt: str) -> dict:
         self.model = model
         self.user_prompt = user_prompt
+        if "process architect" in system_prompt:
+            return {"content": '{"goal":"A fictional conflict","roles":[{"name":"Actor","count":1}]}'}
         return {"content": "The actor reaches a decision after a conflict.", "raw": {"ok": True}}
 
 
@@ -49,6 +54,10 @@ class SequenceProvider:
         self.user_prompts: list[str] = []
 
     async def chat(self, model: str, system_prompt: str, user_prompt: str) -> dict:
+        if "literary fidelity checker" in system_prompt:
+            return {"content": '{"decision":"accept","findings":[]}'}
+        if "action consistency checker" in system_prompt:
+            return {"content": '{"decision":"accept","reason":"Offline fixture.","scope":{"self_owned":true,"public_only":true},"findings":[]}'}
         self.user_prompts.append(user_prompt)
         idx = min(len(self.user_prompts) - 1, len(self.outputs) - 1)
         return {"content": self.outputs[idx], "raw": {"ok": True}}
@@ -171,7 +180,7 @@ def test_autonomous_action_contract_is_rich_but_limited_to_self() -> None:
     assert normalized["participation"] == "act"
     assert normalized["intent"] == "protect the team"
     assert normalized["shared_effect_claim"] == "the team may have stopped"
-    assert normalized["boundary_signal"] == "ready"
+    assert normalized["episode_signal"] == "ready"
 
 
 def test_condition_branch_only_true_runs() -> None:
@@ -900,17 +909,17 @@ def test_continuous_loop_uses_semantic_activation_and_autonomous_node_proposals(
     provider = SequenceProvider(
         [
             '{"active_node_ids":["agent_1","agent_2"],"reason":"both are involved"}',
-            '{"action":"Lin says hello.","proposal_summary":"start a conversation","public_state_update":"Lin greets Chen","private_state_update":"less hesitant","boundary_signal":"none"}',
-            '{"action":"Chen answers.","proposal_summary":"engage Lin","public_state_update":"Chen responds","private_state_update":"curious","boundary_signal":"ready"}',
+            '{"participation":"act","action":"Lin says hello.","intent":"start a conversation","shared_effect_claim":"Lin greets Chen","self_update":"less hesitant","episode_signal":"continue"}',
+            '{"participation":"act","action":"Chen answers.","intent":"engage Lin","shared_effect_claim":"Chen responds","self_update":"curious","episode_signal":"ready"}',
             '{"decision":"continue","guidance":"Only preserve continuity.","reason":"exchange remains open","shared_state_summary":"Lin and Chen have started talking."}',
             '{"active_node_ids":["agent_1","agent_2"],"reason":"conversation continues"}',
-            '{"action":"Lin asks about class.","proposal_summary":"learn Chen opinion","public_state_update":"A class topic is opened","private_state_update":"more confident","boundary_signal":"none"}',
-            '{"action":"Chen smiles.","proposal_summary":"signal interest","public_state_update":"Chen reacts positively","private_state_update":"receptive","boundary_signal":"ready"}',
+            '{"participation":"act","action":"Lin asks about class.","intent":"learn Chen opinion","shared_effect_claim":"A class topic is opened","self_update":"more confident","episode_signal":"continue"}',
+            '{"participation":"act","action":"Chen smiles.","intent":"signal interest","shared_effect_claim":"Chen reacts positively","self_update":"receptive","episode_signal":"ready"}',
             '{"decision":"transition","guidance":"Carry forward established facts only.","reason":"topic is resolved","shared_state_summary":"They have established mutual interest."}',
             '{"active_node_ids":["agent_1","agent_2"],"reason":"both decide what follows"}',
-            '{"action":"Lin suggests walking home.","proposal_summary":"continue together","public_state_update":"Lin proposes leaving together","private_state_update":"committed","boundary_signal":"ready"}',
-            '{"action":"Chen agrees.","proposal_summary":"accept proposal","public_state_update":"They leave together","private_state_update":"trust increased","boundary_signal":"ready"}',
-            '{"decision":"stop","guidance":"","reason":"objective reached","shared_state_summary":"They leave campus together."}',
+            '{"participation":"act","action":"Lin suggests walking home.","intent":"continue together","shared_effect_claim":"Lin proposes leaving together","self_update":"committed","episode_signal":"ready"}',
+            '{"participation":"act","action":"Chen agrees.","intent":"accept proposal","shared_effect_claim":"They leave together","self_update":"trust increased","episode_signal":"ready"}',
+            '{"decision":"stop","task_complete":true,"completion_reason":"They leave campus together.","guidance":"","reason":"objective reached","shared_state_summary":"They leave campus together."}',
             "## Final scene\n\nThey leave campus together.",
         ]
     )
@@ -950,7 +959,7 @@ def test_continuous_loop_uses_semantic_activation_and_autonomous_node_proposals(
     assert first_input["context"]["state"]["mode"] == "roleplay"
     assert first_input["role"]["identity"] in {"Lin", "Chen"}
     assert first_output["action"]
-    assert first_output["proposal_summary"]
+    assert first_output["intent"]
     assert first_output["action_index"] == 1
 
 
@@ -979,7 +988,7 @@ def test_distributed_activation_is_mode_neutral_and_skips_irrelevant_research_no
     provider = SequenceProvider(
         [
             '{"active_node_ids":["analyst_1"],"reason":"only the analyst owns the current evidence task"}',
-            '{"action":"The analyst identifies two competing explanations.","proposal_summary":"test both explanations","public_state_update":"Two hypotheses are now open","private_state_update":"needs more evidence","boundary_signal":"ready"}',
+            '{"participation":"act","action":"The analyst identifies two competing explanations.","intent":"test both explanations","shared_effect_claim":"Two hypotheses are now open","self_update":"needs more evidence","episode_signal":"ready"}',
             '{"decision":"transition","guidance":"Preserve both hypotheses.","reason":"analysis can move to review","shared_state_summary":"Two hypotheses await challenge."}',
         ]
     )
@@ -1132,7 +1141,7 @@ def test_entity_agent_injects_entity_specific_detail_granularity_to_builtin_llm(
     assert "Detail granularity" in provider.user_prompt
     assert "specific words" in provider.user_prompt
     assert "not a checklist or minimum length" in provider.user_prompt
-    assert "private experience" in provider.user_prompt
+    assert "Private experience belongs only in private fields" in provider.user_prompt
 
 
 def test_external_agent_injects_background_prompt() -> None:

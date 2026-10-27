@@ -43,7 +43,7 @@ export function apiAssetUrl(value: string): string {
 }
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(message: string, public readonly status: number, public readonly code?: string, public readonly diagnostics?: unknown) {
     super(message);
     this.name = "ApiError";
   }
@@ -52,12 +52,19 @@ export class ApiError extends Error {
 async function responseError(response: Response): Promise<ApiError> {
   const raw = await response.text();
   let message = raw || `HTTP ${response.status}`;
+  let code: string | undefined;
+  let diagnostics: unknown;
   try {
     const body = JSON.parse(raw);
     if (typeof body.detail === "string") message = body.detail;
     else if (Array.isArray(body.detail)) message = body.detail.map((item: { msg?: string }) => item.msg || "Invalid input").join("; ");
+    else if (body.detail && typeof body.detail.message === "string") {
+      message = body.detail.message;
+      code = typeof body.detail.code === "string" ? body.detail.code : undefined;
+      diagnostics = body.detail.diagnostics;
+    }
   } catch { /* Non-JSON server errors retain their text. */ }
-  return new ApiError(message, response.status);
+  return new ApiError(message, response.status, code, diagnostics);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

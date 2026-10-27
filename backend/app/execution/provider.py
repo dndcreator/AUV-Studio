@@ -21,9 +21,11 @@ LOCAL_PROVIDER_DEFAULTS: dict[str, tuple[str, str]] = {
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, message: str, *, retryable: bool = True) -> None:
+    def __init__(self, message: str, *, retryable: bool = True, code: str = "provider_error", status_code: int | None = None) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.code = code
+        self.status_code = status_code
 
 
 class OpenAICompatibleProvider:
@@ -103,6 +105,7 @@ class OpenAICompatibleProvider:
                     raise ProviderError(
                         f"Provider request failed: HTTP {resp.status_code} for {_endpoint_label(url)}; model={effective_model}; detail={detail}",
                         retryable=resp.status_code in {408, 429} or resp.status_code >= 500,
+                        code="http_error", status_code=resp.status_code,
                     ) from exc
                 data = resp.json()
                 if protocol_kind == "ollama":
@@ -130,13 +133,17 @@ class OpenAICompatibleProvider:
                     break
         if isinstance(last_error, httpx.TimeoutException):
             description = f"{type(last_error).__name__}: request timed out; timeout_seconds={self.timeout_seconds}; endpoint={_endpoint_label(url)}"
+            code = "timeout"
         elif isinstance(last_error, httpx.RequestError):
             description = f"{type(last_error).__name__}: network request failed; endpoint={_endpoint_label(url)}"
+            code = "network_error"
         else:
             description = str(last_error).strip() or (type(last_error).__name__ if last_error is not None else "no request attempt")
+            code = last_error.code if isinstance(last_error, ProviderError) else "invalid_response"
         raise ProviderError(
             f"Provider request failed: {description}",
             retryable=not isinstance(last_error, ProviderError) or last_error.retryable,
+            code=code, status_code=last_error.status_code if isinstance(last_error, ProviderError) else None,
         ) from last_error
 
 

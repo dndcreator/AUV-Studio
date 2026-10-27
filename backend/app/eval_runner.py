@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import json
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,9 +20,11 @@ from .evaluation.scenario import list_scenarios, load_scenario
 from .evaluation.writing import benchmark_identity, generate_sample, judge_samples, load_styles
 from .execution.engine import WorkflowEngine
 from .execution.provider import build_provider, provider_accepts_keyless
+from .execution.simulation_loop import build_loop_policy
 from .model_config_service import apply_stored_model_config
 from .models import WorkflowRecord
-from .schemas import RunReportRequest, RunRequest
+from .schemas import PlanCompileRequest, RunReportRequest, RunRequest
+from .plan_compiler import compile_workflow_from_plan
 from .service import generate_run_report, get_events, get_run, get_run_metrics
 
 
@@ -35,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--list", action="store_true", help="List available scenarios")
     parser.add_argument("--execute", action="store_true", help="Actually call the configured model")
     parser.add_argument("--judge", action="store_true", help="Spend one additional call on an advisory LLM review")
-    parser.add_argument("--style", action="append", default=[], help="Fixed writing profile, e.g. novel or screenplay (one call each)")
+    parser.add_argument("--style", action="append", default=[], help="Fixed writing profile (two calls each; at most four with correction)")
     parser.add_argument("--max-calls", type=int, default=12)
     parser.add_argument("--max-total-tokens", type=int, default=26_000)
     parser.add_argument("--max-output-tokens", type=int, default=600)
@@ -60,15 +62,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 2
 
-    estimated_calls = int(scenario.get("estimated_calls", 0)) + len(style_names) + (1 if args.judge else 0)
+    policy = build_loop_policy(workflow)
+    check_calls = policy.max_actions if policy.enabled else 0
+    estimated_calls = int(scenario.get("estimated_calls", 0)) + check_calls + 2 * len(style_names) + (1 if args.judge else 0)
     print(f"Scenario: {scenario.get('title', args.scenario)}")
     print(f"Expected calls: about {estimated_calls}; hard limit: {budget.max_calls}")
     print(f"Token hard limit: {budget.max_total_tokens}; output/call: {budget.max_output_tokens_per_call}")
     print(f"Cost hard limit: ${budget.max_cost_usd:.2f} (using the supplied price assumptions)")
     print("Billing note: the USD limit is an estimate; call and token limits are the enforceable safeguards.")
+    if check_calls:
+        print(f"Includes up to {check_calls} action checks; each repair can add 2 calls within the same hard limits.")
+    print("Transient requests may retry once; every physical attempt uses the same call/token/cost limits.")
+    print("Invalid action-check envelopes may be rechecked once without reissuing the actor; the same hard limits apply.")
     if estimated_calls > budget.max_calls:
-        print("[ERROR] expected calls exceed the configured hard limit", file=sys.stderr)
-        return 2
+        label = "ERROR" if args.execute else "WARNING"
+        print(f"[{label}] expected calls exceed the configured hard limit", file=sys.stderr)
+        if args.execute:
+            return 2
     if not args.execute:
         print("Preflight only. Add --execute to make real model calls.")
         return 0
@@ -79,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[ERROR] evaluation could not start: {exc}", file=sys.stderr)
         return 1
     print(f"Run status: {artifact['run']['status']}")
+    result_status = artifact.get("result_status", artifact["run"]["status"])
+    print(f"Deliverable status: {result_status}")
     if not scenario.get("writing_source"):
         print(f"Rule score: {artifact['deterministic_evaluation']['score']}/100")
     behavior = artifact["deterministic_evaluation"].get("behavior")
@@ -90,7 +102,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Calls: {artifact['usage']['calls']}; estimated tokens: {artifact['usage']['input_tokens'] + artifact['usage']['output_tokens']}")
     print(f"Estimated cost: ${artifact['usage']['estimated_cost_usd']:.6f}")
     print(f"Review: {result_path}")
-    return 0 if artifact["run"]["status"] == "succeeded" and (not behavior or behavior["status"] not in {"fail", "inconclusive"}) else 1
+    return 0 if (artifact["run"]["status"] == "succeeded" and result_status == "succeeded"
+                 and not any(item.get("error") for item in artifact.get("narratives", []))
+                 and (not behavior or behavior["status"] not in {"fail", "inconclusive"})) else 1
 
 
 def _build_budget(args: argparse.Namespace) -> EvalBudget:
@@ -130,15 +144,44 @@ async def _execute(
         config_db.close()
     if not provider.api_key and not provider_accepts_keyless(provider.provider_kind, provider.base_url):
         raise RuntimeError("configured provider has no API key; open Model Setup or set AUV_OPENAI_API_KEY")
-    # One logical eval call must equal one provider request for predictable spend.
+    # The budget wrapper, not a hidden inner loop, counts every physical attempt.
     provider.retry_count = 0
     if (urlsplit(provider.base_url).hostname or "").lower().endswith("deepseek.com"):
         provider.thinking_mode = "disabled"
 
-    limited_provider = BudgetedProvider(provider, budget)
+    limited_provider = BudgetedProvider(provider, budget, retry_count=1)
     profiles = load_styles(styles or scenario.get("styles", []))
     if scenario.get("writing_source"):
         return await _execute_writing(scenario_name, scenario, limited_provider, budget, use_judge, profiles)
+    generation = None
+    if scenario.get("plan_text"):
+        try:
+            compiled = await compile_workflow_from_plan(limited_provider, PlanCompileRequest(
+                plan_text=scenario["plan_text"], max_agents=int(scenario.get("max_agents", 2)), language="zh",
+            ))
+            workflow = compiled.workflow
+            generation = compiled.generation
+            limits = scenario.get("run_limits", {})
+            simulation = workflow.environment.simulation
+            simulation["horizon_rounds"] = min(int(simulation.get("horizon_rounds", 2) or 2), int(limits.get("rounds", 2)))
+            simulation["output_contract"] = {**simulation.get("output_contract", {}), "unit": "action", "max_items": int(limits.get("actions", 3))}
+            _validate_scenario_safety(workflow)
+            cap = max(64, min(int(limits.get("output_tokens", budget.max_output_tokens_per_call)), budget.max_output_tokens_per_call))
+            limited_provider.budget = replace(budget, max_output_tokens_per_call=cap)
+            provider.max_output_tokens = cap
+        except Exception as exc:  # Preserve a failed real decomposition instead of losing the evaluation record.
+            artifact = {
+                "schema_version": 2, "created_at": datetime.now(timezone.utc).isoformat(),
+                "scenario": {"id": scenario_name, "title": scenario.get("title", scenario_name), "version": scenario.get("version", 1)},
+                "model": {"model": provider.default_model, "provider": provider.provider_kind, "base_url": _safe_base_url(provider.base_url)},
+                "budget": asdict(budget), "usage": limited_provider.usage.model_dump(budget),
+                "run": {"status": "failed", "error": {"type": type(exc).__name__, "message": str(exc)[:500],
+                         "code": getattr(exc, "code", "compile_failed"), "diagnostics": getattr(exc, "diagnostics", [])}},
+                "goal": scenario["plan_text"], "deterministic_evaluation": {"score": 0, "actions": []},
+                "llm_judge": None, "transport_retries": limited_provider.retries,
+                "diagnostics": {"usage_by_kind": limited_provider.usage_by_kind},
+            }
+            return artifact, _save_result(scenario_name, artifact)
     engine = WorkflowEngine(provider=limited_provider)  # type: ignore[arg-type]
     eval_engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=eval_engine)
@@ -168,9 +211,10 @@ async def _execute(
                 try:
                     report = await generate_run_report(
                         db, limited_provider, run_id,
-                        RunReportRequest(mode="narrative", length="short", style_prompt=profile["prompt"]),
+                        RunReportRequest(mode="narrative", title=scenario.get("title"), length="short", style_prompt=profile["prompt"]),
                     )
-                    samples.append({"style": profile["id"], "version": profile["version"], "text": report.report_markdown})
+                    samples.append({"style": profile["id"], "version": profile["version"], "text": report.report_markdown,
+                                    "fidelity": report.fidelity})
                 except Exception as exc:  # noqa: BLE001
                     samples.append({"style": profile["id"], "error": str(exc)})
                     break
@@ -189,6 +233,7 @@ async def _execute(
             "budget": asdict(budget),
             "usage": limited_provider.usage.model_dump(budget),
             "run": {"id": run_id, "status": detail.status, "error": detail.error},
+            "result_status": "partial" if any(item.get("error") for item in samples) else detail.status,
             "duration_ms": metrics.duration_ms,
             "goal": workflow.environment.simulation.get("task_contract", {}).get("objective", workflow.environment.scenario),
             "deterministic_evaluation": deterministic,
@@ -196,6 +241,29 @@ async def _execute(
             "final_text": str(detail.output.get("final", {}).get("content", "")),
             "narratives": samples,
             "comparison": comparison,
+            "compilation": generation,
+            "transport_retries": limited_provider.retries,
+            "completion": detail.output.get("completion"),
+            "diagnostics": {
+                "usage_by_kind": limited_provider.usage_by_kind,
+                "initial_phase": (workflow.environment.simulation.get("phases") or [{}])[0],
+                "coordinates": {"time": workflow.environment.time_context, "location": workflow.environment.spatial_context},
+                "last_audits": [{key: event.payload.get(key) for key in
+                                  ("round", "decision", "task_complete", "completion_reason", "scene_control")}
+                                for event in events.events if event.event == "episode_audited"][-2:],
+            },
+            "consistency": {
+                "checked": sum(event.event == "action_checked" for event in events.events),
+                "not_accepted": [
+                    {"node": event.node_id, "attempt": event.payload.get("attempt"),
+                     "assessment": event.payload.get("assessment", {}),
+                     "diagnostic": (event.payload.get("diagnostic", "")
+                                    if event.payload.get("assessment", {}).get("error_type") == "ActionConsistencyError" else ""),
+                     "candidate": str(event.payload.get("candidate", {}).get("action", ""))[:600]}
+                    for event in events.events if event.event == "action_checked"
+                    and event.payload.get("assessment", {}).get("decision") != "accept"
+                ],
+            },
         }
         if use_judge and detail.status == "succeeded":
             try:
@@ -244,6 +312,7 @@ async def _execute_writing(
             },
         },
         "narratives": samples, "llm_judge": None,
+        "diagnostics": {"usage_by_kind": provider.usage_by_kind},
         "deterministic_evaluation": {"score": 100 if complete else 0, "actions": [], "findings": [] if complete else ["Writing generation incomplete."]},
     }
     if use_judge and complete:
@@ -319,6 +388,10 @@ def _review_markdown(artifact: dict[str, Any]) -> str:
         "created_at": artifact["created_at"],
         "model": artifact["model"]["model"],
         "run": artifact["run"],
+        "result_status": artifact.get("result_status", artifact["run"]["status"]),
+        "manual_review": artifact.get("manual_review"),
+        "completion": artifact.get("completion"),
+        "diagnostics": artifact.get("diagnostics"),
         "usage": usage,
         "deterministic_evaluation": {"score": evaluation["score"]},
         "benchmark": artifact.get("benchmark"),
@@ -331,7 +404,7 @@ def _review_markdown(artifact: dict[str, Any]) -> str:
         "<!-- AUV_EVAL " + json.dumps(metadata, ensure_ascii=False, separators=(",", ":")) + " -->",
         f"# {artifact['scenario']['title']}",
         "",
-        f"{artifact['run']['status']} · {artifact['model']['model']} · {usage['calls']} calls · ${usage['estimated_cost_usd']:.6f} estimated",
+        f"{artifact.get('result_status', artifact['run']['status'])} · {artifact['model']['model']} · {usage['calls']} calls · ${usage['estimated_cost_usd']:.6f} estimated",
         "",
         str(artifact.get("goal", "")),
         "",
@@ -340,10 +413,23 @@ def _review_markdown(artifact: dict[str, Any]) -> str:
         lines.extend(["## Source", "", artifact["source_text"], ""])
     for sample in artifact.get("narratives", []):
         lines.extend([f"## {sample['style']}", "", sample.get("text") or f"Generation failed: {sample.get('error', '')}", ""])
+        if sample.get("fidelity"):
+            checks = sample["fidelity"]["checks"]
+            lines.extend([f"Fidelity checks: {', '.join(row['decision'] for row in checks)}.", ""])
     if evaluation.get("actions"):
         lines.extend(["## Simulation", ""])
     for item in evaluation.get("actions", []):
         lines.extend([f"**{item['node_id']}**: {item['action']}", ""])
+    consistency = artifact.get("consistency", {})
+    if consistency:
+        lines.extend(["## Action Checks", "", f"{consistency['checked']} checked candidates; rejected/uncertain candidates below did not occur.", ""])
+        for row in consistency["not_accepted"]:
+            assessment = row["assessment"]
+            lines.extend([f"- {row['node']} attempt {row['attempt']}: {assessment.get('decision')} "
+                          f"({assessment.get('reason') or assessment.get('error_type', '')})",
+                          f"  Candidate, not an accepted event: {row['candidate']}"])
+            if row.get("diagnostic"):
+                lines.append(f"  Protocol diagnostic: {row['diagnostic']}")
     behavior = evaluation.get("behavior")
     if behavior:
         lines.extend(["## Behavioral Evidence", "", f"Boundary: {behavior['information_boundary']['status']}",
@@ -360,12 +446,20 @@ def _review_markdown(artifact: dict[str, Any]) -> str:
                       "State (requires semantic review against actual actions):",
                       *[f"- {row['id']}: {str(row['value'])[:160]} ({row['visibility']}; sources={row['sources']})" for row in behavior['state_evidence']], ""])
     action_text = "\n".join(item["action"] for item in evaluation.get("actions", []))
+    if artifact.get("compilation"):
+        lines.extend([f"Plan compilation: {artifact['compilation']}", ""])
+    if artifact.get("transport_retries"):
+        lines.extend([f"Transport retries (included in usage): {artifact['transport_retries']}", ""])
     if artifact.get("final_text") and not artifact.get("narratives") and str(artifact["final_text"]).strip() != action_text.strip():
         lines.extend(["## Outcome", "", artifact["final_text"], ""])
     for finding in evaluation.get("findings", []):
         lines.append(f"- {finding}")
     if artifact["run"].get("error"):
         lines.append(f"Error: {artifact['run']['error']}")
+    if artifact.get("manual_review"):
+        review = artifact["manual_review"]
+        lines.extend(["", "## Manual Review", "", f"Status: {review['status']}",
+                      *[f"- {issue}" for issue in review.get("issues", [])]])
     if judge is not None:
         lines.extend(["", "## Review", ""])
         for item in judge.get("samples", []):

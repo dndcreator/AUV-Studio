@@ -18,7 +18,9 @@ from starlette.concurrency import run_in_threadpool
 from .config import settings
 from .db import Base, SessionLocal, engine, get_db
 from .execution.engine import WorkflowEngine
-from .execution.provider import build_provider
+from .execution.provider import ProviderError, build_provider
+from .narrative_fidelity import NarrativeFidelityError
+from .plan_generation import PlanGenerationError
 from .evidence import MAX_UPLOAD_BYTES, parse_evidence_upload
 from .models import RunRecord
 from .media_service import (
@@ -324,7 +326,20 @@ def create_template_api(body: TemplateCreateRequest, db: Session = Depends(get_d
 
 @app.post("/api/templates/compile", response_model=PlanCompileResponse)
 async def compile_template_api(request: PlanCompileRequest) -> PlanCompileResponse:
-    return await compile_workflow_from_plan(provider=provider, request=request)
+    try:
+        return await compile_workflow_from_plan(provider=provider, request=request)
+    except PlanGenerationError as exc:
+        raise HTTPException(status_code=502, detail={
+            "code": exc.code, "message": str(exc), "diagnostics": exc.diagnostics,
+        }) from exc
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail={
+            "code": exc.code,
+            "message": f"Plan model request failed: {exc.code}"
+                       + (f" (provider HTTP {exc.status_code})" if exc.status_code is not None else "")
+                       + ". No fallback draft was applied.",
+            "diagnostics": {"retryable": exc.retryable, "provider_status": exc.status_code},
+        }) from exc
 
 
 @app.post("/api/evidence/parse", openapi_extra={"requestBody": {"required": True, "content": {
@@ -604,7 +619,18 @@ def compare_runs_api(
 
 @app.post("/api/runs/{run_id}/report", response_model=RunReportResponse)
 async def generate_run_report_api(run_id: str, request: RunReportRequest, db: Session = Depends(get_db)) -> RunReportResponse:
-    return await generate_run_report(db=db, provider=provider, run_id=run_id, request=request)
+    try:
+        return await generate_run_report(db=db, provider=provider, run_id=run_id, request=request)
+    except NarrativeFidelityError as exc:
+        raise HTTPException(status_code=502, detail={
+            "code": exc.code, "message": str(exc),
+            "diagnostics": {"attempts": len(exc.checks)},
+        }) from exc
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail={
+            "code": exc.code, "message": "Report model request failed. No new report was published.",
+            "diagnostics": {"retryable": exc.retryable, "provider_status": exc.status_code},
+        }) from exc
 
 
 @app.post("/api/runs/{run_id}/media", response_model=MediaGenerationResponse)

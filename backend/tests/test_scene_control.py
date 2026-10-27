@@ -12,7 +12,7 @@ from app.execution.checkpoints import continuous_snapshot, restore_continuous_ch
 from app.execution.director_policy import assess_output_quality
 from app.execution.engine import WorkflowEngine
 from app.execution.scene_control import apply_scene_audit, init_scene_control, normalize_scene_contract, scene_audit_instruction
-from app.execution.simulation_loop import normalize_action_output
+from app.execution.action_output import normalize_action_output
 from app.execution.simulation_state import init_simulation_state
 from app.models import NodeRunRecord, RunEventRecord, RunRecord
 from app.schemas import RollbackRequest, RunRequest, WorkflowDefinition
@@ -119,7 +119,7 @@ def test_waiting_with_empty_delta_never_leaks_the_protocol_as_readable_action() 
     assert value["action"] == ""
     assert value["content"] == ""
     assert value["turn_delta"] == ""
-    direct = normalize_action_output({"action": "A new offer.", "turn_delta": "Offer made", "participation": "act"}, round_index=1, action_index=2)
+    direct = normalize_action_output({"participation": "act", "action": "A new offer.", "turn_delta": "Offer made"}, round_index=1, action_index=2)
     assert direct["turn_delta"] == "Offer made"
 
 
@@ -138,6 +138,8 @@ def test_real_engine_protocol_checks_false_delta_without_extra_calls_and_can_sto
             self.round = 0
 
         async def chat(self, model: str, system_prompt: str, user_prompt: str) -> dict:
+            if "action consistency checker" in system_prompt:
+                return {"content": '{"decision":"accept","reason":"Offline fixture.","scope":{"self_owned":true,"public_only":true},"findings":[]}'}
             self.prompts.append(user_prompt)
             if "route attention" in system_prompt:
                 self.round += 1
@@ -145,9 +147,10 @@ def test_real_engine_protocol_checks_false_delta_without_extra_calls_and_can_sto
             elif "continuity auditor" in system_prompt:
                 assert "Turn Delta is a participant claim, not proof" in user_prompt
                 content = {"decision": "stop" if self.round == 2 else "continue",
+                           "task_complete": self.round == 2, "completion_reason": "The fixture scene is resolved.",
                            "round_progress": [{"round": self.round, "stagnant": True, "reason": "The same action repeats despite claimed novelty."}]}
             else:
-                content = {"action": "I repeat my earlier offer.", "intent": "offer shelter", "turn_delta": "Everything has changed.", "participation": "act"}
+                content = {"participation": "act", "action": "I repeat my earlier offer.", "intent": "offer shelter", "turn_delta": "Everything has changed."}
             return {"content": json.dumps(content)}
 
     database = create_engine("sqlite:///:memory:")

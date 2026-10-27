@@ -47,6 +47,16 @@
 
 ## 3. 运行查询
 
+连续模拟的结束结果现在明确区分执行结束和目标完成：仅 Director 返回 `decision=stop`、`task_complete=true` 且提供非空 `completion_reason` 时，运行状态为 `succeeded`。达到行动/轮数上限、或 Director 因无法推进而停止时，状态为 `stopped`，不是目标完成；异常仍为 `failed`。
+
+`GET /runs/{run_id}` 的 `output.completion` 提供 `{status: completed|incomplete, reason, assessment?}`。reason 为 `goal_completed/director_stopped/action_limit/round_limit/user_stopped/execution_failed`。已有行动、状态与可用检查点保留；文学适配不得替 incomplete 结果补出不存在的结局。运行级终止事件仍写入签名事件流，但不作为可回滚的节点检查点。
+
+`POST /templates/compile` 的结构化提取支持 `phases: [{name,objective,exit_criteria}]`，只覆盖用户请求的片段；无 phases 时使用模型 phase_logic，再缺失则使用单个任务阶段。`environment.time_context/spatial_context` 规范化后保留。不会根据故事关键词强制选择固定开场或死亡结局。
+
+连续行动的 `action_checked` 事件新增 `check_attempt`：表示同一候选的核验协议尝试，独立于角色候选的 `attempt`。仅格式无效时最多重核验一次；每条记录的 `context_digest` 对应实际检查提示词，恢复不重放 Agent 行动。失败协议的 `diagnostic` 提供安全的字段类型/长度线索；既有审计侧响应摘录不进入可读广播或模拟事实。
+
+检查记录协议版本为 3，结构合法的候选包含 `actor_id`，语义 assessment 必须带 `scope: {self_owned: boolean, public_only: boolean}`；缺失、类型错误或 accept 与 false 标记冲突都不得放行。scope 是检查模型的判断，不是外接 Agent 可以自行声明的授权。结构无效的响应不调用语义检查器，按下述错误协议记录。外接 Agent 的任务信封保持不变。
+
 - `GET /runs/{run_id}` 运行详情
 - `GET /runs/{run_id}/status` 轻量状态：仅返回 `{"run_id":"run_xxx","status":"running"}`，不存在返回 404；不加载输入、输出和节点明细
 - `GET /runs/{run_id}/events?after_seq=0&limit=500` 事件流
@@ -58,6 +68,10 @@
 - `POST /runs/{run_id}/report` 报告生成
   - 发送完整可读素材（含结尾和用户上传证据），不再只取前 16,000 字符。
   - 素材超过 `AUV_REPORT_SOURCE_MAX_CHARS`（默认 64,000 字符）时返回 413，在调用写作模型之前中止。可导出 Full Log，或确认模型上下文和成本后调整环境变量并重启；不会自动增加分段摘要调用。
+  - `narrative/story` 走生成与忠实度核验：正常两次模型调用，发现实质性补写时最多修正一次并再次核验，最多四次逻辑调用；底层有界传输重试另计。`briefing` 维持原有单次生成流程。
+  - 作品允许改写对白、文风与非实质性细节，不允许新增未发生的答复、决定、风险事实、交易或结局。核验引用必须是素材与候选正文中实际存在的片段，语义判断仍由模型完成，并非形式化正确性保证。
+  - 成功作品增加 `fidelity: {version, source_hash, checks}`，每项 check 含 `attempt/candidate_hash/decision/findings`；findings 引用 `candidate_quote/source_quote/reason`。该元数据不写回模拟事实，也不默认显示为正文。正式报告该字段为 null。
+  - 未通过、无效核验、空白/截断输出或未配置模型返回结构化 502 `detail: {code,message,diagnostics}`；例如 `narrative_fidelity_failed/narrative_invalid_review/narrative_output_truncated/model_not_configured`。不会把失败候选或降级梗概当作合格文学作品返回，既有模拟状态不变。Provider 请求失败也返回安全的结构化错误，不透传原始响应。
 - `POST /runs/{run_id}/media` 将报告、剧本或本次运行的可读输出转为图片或视频任务
 - `GET /media/generations/{generation_id}` 查询并刷新异步媒体任务
 - `GET /media/generations/{generation_id}/assets/{asset_id}/content` 读取本地生成资产或代理视频内容
@@ -85,7 +99,7 @@
 - `GET /node-specs` 节点规格
 - `GET /interaction-modes` 互动模式
 
-连续执行沿用 Workflow JSON 的 `edges/interaction`，无需新增 API。实体间无边时共享公开场景，有边时按 source -> target 传递公开行动；双向交流需要反向边，连续模式允许通信环，DAG 仍拒绝环。节点运行输入的 `context.recent_actions` 是该节点的可见投影，`context.interactions` 和 `_interactions` 带互动规则、`edge_id`、源 `event_seq`，不包含其他节点私有认知。全局 Dynamic State 仍是共享的权威事实，不受消息连线隐藏。
+连续执行沿用 Workflow JSON 的 `edges/interaction`，无需新增 API。实体间无边时共享公开场景，有边时按 source -> target 传递公开行动；双向交流需要反向边，连续模式允许通信环，DAG 仍拒绝环。节点运行输入的 `context.recent_actions` 是该节点的可见投影，`context.interactions` 和 `_interactions` 带互动规则、`edge_id`、源 `event_seq`，不包含其他节点私有认知。全局 Dynamic State 是共享的领域记录，不受消息连线隐藏；它是当前状态的唯一存储权威，不等于每条来源声明已经被独立证实。
 
 运行详情、Full Log、Trace 继续保留本地用户可查看的完整审计证据，它们不是给 Agent 的上下文 API。前端实时/演播选项只改变展示节奏，不改事件查询、回放或运行协议。
 - `GET /mode-contracts` 模式与子场景契约定义
@@ -176,3 +190,31 @@
 - Full Log、Live、Trace 和 Replay 从 `run_events` 构建，不在 simulation state 内复制事件列表。
 - 安全说明：
   - 事件与节点运行输入输出会对常见敏感字段自动脱敏（`api_key/token/authorization/password/secret`）
+
+### 连续模拟行动检查事件
+
+现有 `GET /api/runs/{run_id}/events`、Trace 和 Full Log 新增 `event=action_checked`，不新增配置页面或 HTTP 入口。节点在检查期间仍为 running；只有接纳后才发 succeeded。
+
+`payload` 包含 `version=3`、`round`、`action_index`、`attempt`（1 或 2）、`candidate` 和 `assessment`。语义核验另有 `check_attempt/context_digest`；正常 assessment 为 `{decision: accept|conflict|uncertain, reason, scope: {self_owned, public_only}, findings: [{category, reason, evidence_ids}]}`，scope 两项必须为布尔值。category 为 `spacetime|existence|capability|knowledge|causality|evidence`。引用的既有依据快照在 `cited_evidence` 中；核验失败记录 `decision=error/error_type`，另有各最多 600 字符的 `response_excerpt/diagnostic`，检查传输异常对外失败消息不回显私有检查上下文。
+
+角色输出先经过 `action_output.ParticipantAction` 结构校验。必需 `participation: act|observe|wait` 和字符串 `action`，act 时不能为空；`intent/observation/self_update/turn_delta/shared_effect_claim` 可省略，存在时必须为字符串。`episode_signal` 为 `continue|ready`，可选 `result` 为布尔值；不再根据旧别名补齐角色意图，也不把任意 `state_updates` 交给状态系统。坏 JSON、非对象、重复键、非有限数字及内置模型的 mock/截断响应不能回退成可读行动。允许 JSON 代码围栏。
+
+结构错误写同一签名事件流：`candidate={}`、可计算时附 `response_digest`，assessment 为 `{decision: error, error_type: ActionOutputError, code: invalid_action_output, issues: [{field,type}]}`，不保存坏响应正文。内置节点至多重生成一次，与语义冲突修正共享两次候选总上限，不额外创建一套重试预算；传输/额度异常不在此吞掉。外接 Agent 不重发：`output.text` 普通文字通过显式适配成为公开行动，也可直接返回标准 participation/action 对象；以对象、数组或代码围栏开头的文字按结构化响应校验，不能借损坏 JSON 绕过检查。DAG 外接任务仍按既有 text 输出处理。
+
+这些候选和引用可含角色私有内容，属于本地用户审计材料，不是其他 Agent 的 inbox。被拒绝的内容不会进入 NodeRun 的成功 output、近期有效行动、记忆、报告素材或 State Coder；未通过且修正次数耗尽时节点/run 为 failed，既有状态保留。外接 Agent 不自动重试，已经发生的远端副作用也不会因候选被拒绝而撤销。检查事件不是新增可回滚检查点，使用现有已提交边界回滚。
+
+环境变量 `AUV_ACTION_CHECK_MAX_CHARS` 控制检查输入 JSON 字符限额，默认 `64000`。超出时明确停止，不裁掉背景规则后假装检查完成。当前门只用于 continuous 实体行动，非 DAG 工具调用权限网关；模型语义判断不是形式化一致性证明。
+
+### Dynamic State 的来源语义
+
+状态值写入后 `status=recorded`，并带 `evidence_kind: claim|observation|action|inference`，省略时保守采用 inference，非法枚举拒绝写入。claim 表示来源主体的断言，observation 表示其观察，action 表示接纳记录中的实际自身贡献，inference 表示 Coder 的推断；任何类别都不凭 confidence 或 source_refs 自动升级为已证实事实。类别由模型提出，程序只约束字段，不证明分类语义正确。
+
+值及接纳历史保留准确 source_refs；既有类型、owner/visibility、保留期和回滚规则不变。角色上下文、State Coder 与通用节点提示词保留来源性质，避免把转述渲染为已验证结果。旧值的 confirmed 标签在状态规范化/读取投影中按 recorded 解释，缺失来源类别按 inference 解释，不改写原始历史事件或传入对象，也不引入第二个事实库或独立核实调用。
+
+### 自动解析的失败协议
+
+`POST /api/templates/compile` 成功响应新增 `generation: {attempts, recovered_errors}`。只在模型给出有效 goal 与具名 roles 后构建工作流；不再因网络、截断或 JSON 错误返回启发式成功草案。
+
+失败返回 HTTP 502，`detail` 为 `{code, message, diagnostics}`。code 包括 `network_error/timeout/http_error/model_not_configured/output_truncated/invalid_json/invalid_plan_schema`。结构失败 diagnostics 保留每次 attempt、finish_reason 和 response_chars；供应商错误保留 provider_status 与 retryable，不向网页回显原始模型正文、Key 或请求头。网页 ApiError 保留这些字段，但只显示 message。预算异常继续向调用者传播，不伪装成可修复的 JSON 失败。
+
+格式/截断最多重新生成一次，传输重试由 Provider 负责；真实 Eval 的传输重试在预算层执行并逐次计数，不能无限重试或自动放宽额度。

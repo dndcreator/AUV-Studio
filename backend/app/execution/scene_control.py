@@ -24,7 +24,7 @@ def normalize_scene_contract(raw: Any, state: dict[str, Any]) -> dict[str, Any]:
         "goal": str(source.get("goal") or phase.get("objective") or task.get("objective") or state.get("research_question") or "Develop the current situation toward the user's goal.")[:1200],
         "pacing": _choice(source.get("pacing"), {"slow", "steady", "fast"}, "steady"),
         "detail": _choice(source.get("detail"), {"low", "medium", "high"}, "high" if state.get("detail_granularity") == "detailed" else "medium"),
-        "progress_scale": _choice(source.get("progress_scale"), {"micro", "meso", "macro"}, "micro"),
+        "progress_scale": _choice(source.get("progress_scale"), {"micro", "meso", "macro"}, "meso"),
         "exit_conditions": [str(item).strip()[:600] for item in exits if isinstance(item, str) and item.strip()][:6],
     }
 
@@ -55,6 +55,7 @@ def scene_audit_instruction(
     max_actions: int,
     connections: list[dict[str, Any]] | None = None,
     participants: list[dict[str, Any]] | None = None,
+    allowance: dict[str, Any] | None = None,
 ) -> str:
     first_round = int(scene_control.get("last_audited_round", 0)) + 1
     earlier = [item for item in recent_actions if int(item.get("round", 0)) < first_round][-4:]
@@ -69,7 +70,8 @@ def scene_audit_instruction(
         "invent an extra holder of an existing role, or relay message contents through global guidance. Decide whether the current episode "
         "should continue, transition to a new macro episode, or stop. This applies to simulation, research, "
         "collaboration, and roleplay. Return JSON only: "
-        '{"decision":"continue|transition|stop","guidance":"short boundary constraint only",'
+        '{"decision":"continue|transition|stop","task_complete":false,"completion_reason":"evidence-based goal assessment",'
+        '"guidance":"short boundary constraint only",'
         f'"reason":"brief audit reason","round_progress":[{{"round":{first_round},"stagnant":false,"reason":"observed change or justified waiting"}}],'
         '"scene_contract":null,"state_patch":{"schema_ops":[],"state_ops":[]}}. '
         f"Assess EACH completed round {first_round} through {round_index}, in order, using actual actions and "
@@ -95,6 +97,11 @@ def scene_audit_instruction(
         "only tune pacing, detail, or progress_scale if needed; on transition, supply the next scene_contract with "
         "a new goal and exit_conditions. Leave it null otherwise. Stop when the task completion condition is "
         "satisfied or further simulation has no useful purpose; action/round limits are ceilings, not targets. "
+        "task_complete is true ONLY when accepted actions satisfy the actual requested end condition; never for "
+        "an exhausted budget, a stalled interaction or merely stopping. In those cases stop with task_complete false. "
+        "Use remaining allowance to tune pacing/scale toward the requested scope without scripting actors or "
+        "inventing outcomes. A requested final segment does not need another setup phase. "
+        f"EXECUTION ALLOWANCE:\n{json.dumps(allowance or {}, ensure_ascii=False)}\n"
         f"Hard action limit: {max_actions}. Turn Delta and progress verdicts are runtime signals, not durable facts.\n\n"
         f"SCENE CONTROL:\n{json.dumps(scene_control, ensure_ascii=False, default=str)}\n\n"
         f"CURRENT MACRO STATE:\n{json.dumps(state, ensure_ascii=False, default=str)}\n\n"

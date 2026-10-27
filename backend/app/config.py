@@ -23,6 +23,7 @@ class Settings:
     run_worker_count: int = int(os.getenv("AUV_RUN_WORKER_COUNT", "4"))
     run_queue_max_size: int = int(os.getenv("AUV_RUN_QUEUE_MAX_SIZE", "200"))
     report_source_max_chars: int = max(1, int(os.getenv("AUV_REPORT_SOURCE_MAX_CHARS", "64000")))
+    action_check_max_chars: int = max(1, int(os.getenv("AUV_ACTION_CHECK_MAX_CHARS", "64000")))
     allowed_origins: tuple[str, ...] = tuple(
         origin.strip().rstrip("/") for origin in os.getenv(
             "AUV_ALLOWED_ORIGINS",

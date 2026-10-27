@@ -98,6 +98,7 @@
 - 新概念必须说明持续性与未来相关性；程序层限制总概念数、单实体概念数、每轮新增数、值深度和历史长度。
 - `value_type` 是写入约束；类型不匹配的值被拒绝。`retention` 使用 `persistent | until_resolved | rounds`，其中 `rounds` 到期自动退休。
 - 每个 Schema/State 操作必须引用本批行动中的准确 `node_id + action_index + event_seq`。概念创建后，scope、owner、visibility 和 value type 不可被模型改写。
+- 写入状态统一为 `recorded`，以 `evidence_kind=claim|observation|action|inference` 标记来源性质，缺省为 inference；非法类别拒绝写入。持久化接纳、来源可定位和事实已被证实是不同语义，confidence 不提供独立核实。模型负责分类含义，代码不宣称证明其准确性。读取旧 confirmed 标签时按 recorded 解释，不改写原始事件。
 - 私有状态只能由 owner 自己的行动建立或更新，并且始终只注入 owner 节点。
 - 连续模拟启用 Dynamic State 时必须存在 Director。Director 提供阶段审计调用，程序约束层决定 Patch 是否可接受。
 - 普通节点只收到全局概念与属于自己的私有概念；路由器和前端事件不接收私有概念内容。
@@ -106,7 +107,7 @@
 
 ### 状态层职责
 
-- `dynamic_state`：连续模拟中唯一的领域事实与演化概念层。
+- `dynamic_state`：连续模拟中唯一的领域记录与演化概念层；存储权威不等于对所有转述或推断的真值认证。
 - `world_state`：时间、空间和环境坐标，不保存任意领域事实。
 - `runtime_metrics`：只保存执行进度等机械指标，不保存风险、置信度、关系或结论。
 - `memories`：事实历史和角色经历的召回材料，不等同于当前权威状态。
@@ -125,9 +126,11 @@
 - `app/evaluation/` 提供固定场景加载、预算 Provider、规则评分和独立的长程依赖检查点构建。
 - `app/execution/entity_contracts.py` 在后端定义最小实体行为契约，保证导入、自动生成和手动创建的节点不依赖前端默认提示词才能保持个体、群体、组织、环境、事件和物体语义。
 - `app.eval_runner` 在独立内存数据库中运行真实模型 Eval，不污染产品数据。
-- Eval Provider 对调用数、Token、单次输出和估算费用执行运行前检查，并禁用自动重试。
+- Eval Provider 对调用数、Token、单次输出和估算费用执行运行前检查；关闭底层隐藏重试，由预算层最多重试一次临时 Provider 错误，每次物理请求计入原预算，失败请求保守预留 Token/费用。
 - 普通 Eval 每个场景仅保存一份最新 Markdown，包含实际生成内容、简短评语和用于比较的精简元数据，不复制原始 Full Log；独立长程评测的产物规则见其专项文档。
 - `app/narrative.py` 统一产品文学成稿与评测的提示词；用户的体裁/文风优先于默认小说形式，不改变研究节点本身的行为契约。
+- `app/narrative_fidelity.py` 是报告链路内的独立模块，不是新服务/节点/状态存储。先生成作品，再对实际素材检查新增实质性事实；最多一次修正及复核。失败不发布，引用必须匹配原始片段；作品核验不改变 Dynamic State 或角色行动。产品与固定写作基准共用此路径，正常两次、修正最多四次逻辑调用，Eval 的物理请求始终受同一预算限制。正式 briefing 维持原流程。
+- 行动一致性接纳将“协议失败”与“语义冲突”分开：协议失败可对同一候选重核验一次，不重发角色或外接副作用；语义冲突维持既有的一次内置角色修正上限。每次实际核验单独审计、检查输入限额并计入 Eval 预算，不以恢复为由放宽事实约束。
 - `app/evaluation/writing.py` 加载版本化写作配置，固定素材后分别检查小说和剧本；评分标准与生成要求分离，五项 0-4 分由代码汇总，不能用接口成功分数代表文学质量。
 - `evals/styles.json` 是写作基准配置，`writing_styles` 不运行模拟；素材、要求、评分规则或评审模型变化后，不继续作跨次分差比较。产品仍允许用户输入任意文风，不受评测预设限制。
 
@@ -157,10 +160,12 @@
 
 ### 报告素材边界
 
-报告使用完整可读行动与用户证据，不再按字符前缀截断。完整素材超过 `AUV_REPORT_SOURCE_MAX_CHARS` 时，在 Provider 调用前返回 413；预算内仍只有一次写作调用，不自动创建摘要/裁判调用。Briefing 的运行统计与素材分开，避免重复把每个行动摘录一遍。该字符限额不是模型上下文容量或账单保证，调用重试仍遵循 Provider 策略。
+报告使用完整可读行动与用户证据，不再按字符前缀截断。完整素材超过 `AUV_REPORT_SOURCE_MAX_CHARS` 时，在 Provider 调用前返回 413。Briefing 保持一次生成；文学改写按上文忠实度门正常两次、最多四次逻辑调用，不因素材过长自动创建分段摘要。该字符限额不是模型上下文容量或账单保证，调用重试仍遵循 Provider 策略。
 # Distributed Autonomous Execution
 
 AUV continuous execution is mode-neutral. Roleplay scenes, research stages, consultation workstreams, and custom collaborations use the same distributed loop:
+
+自动计划的阶段由模型按用户请求范围给出，由 `app/plan_phases.py` 规范化；不再为每种模式强塞完整流程。时空字段原样传入现有坐标系统。连续内置节点由引擎一次组装 context/role，通用节点层校验归属后不再重复追加；DAG 路径仍使用通用上下文渲染。
 
 1. An AI semantic router reads the compact shared context and node definitions, then activates only nodes relevant to the next episode.
 2. Each activated node reads the shared context plus its own role state and memory, and autonomously emits an action or proposal.
@@ -169,9 +174,13 @@ AUV continuous execution is mode-neutral. Roleplay scenes, research stages, cons
 5. Director manages a Scene Contract (`goal`, `pacing`, `detail`, `progress_scale`, `exit_conditions`) and audits episode boundaries. It returns `continue`, `transition`, or `stop`, and a semantic progress judgment for each completed global round. Runtime counts consecutive stagnant rounds; two rounds trigger consideration of pacing changes or closure without forcing character actions.
 6. Every accepted domain state value cites a concrete node action and event. Dynamic State remains the sole domain authority. `_scene_control` contains only runtime control metadata; checkpoints separately restore its contract, stagnation counter, and audit cursor alongside Dynamic State and action cursors. Audited boundaries are rollback-capable.
 
+`execution/completion.py` 统一执行器和评测的目标完成判据，不把 stop 或达到上限当作完成。Director 报告 task_complete/completion_reason；无法确认目标完成则保留结果并 stopped。completion 属于运行结果，不是第二套领域状态。节点与审计获得剩余执行额度，不能借此替参与者指定结局。Scene Contract 缺失控制项时采用中性 meso，明确的 micro 与高细节仍保留。
+
+行动核验 v3 保留对 self_owned/public_only 的模型判断并强制检查布尔协议，另在语义核验前拒绝无效角色响应；公开动作中的其他角色新台词/反应和私有心理都应拒绝。此门不采用人物名或剧情词的硬编码检测，也不承诺模型绝不漏判。检查投影通过已存在的事件与状态引用去重，超出全局窗口但实际送达的旧消息仍保留正文；Director 与 State Coder 共用一次行动正文。
+
 The engine hard-codes only the protocol envelope. Relevance, proposals, semantic state summaries, and phase meaning remain model-decided; there are no roleplay keyword tables or domain-specific routing rules.
 
-Scene setup is returned in the initial existing routing call, and progress checks share the existing Director/State Coder audit call. There is no extra per-turn judge call. Contracts stay stable within a scene; Director may tune pacing/detail/scale, and a transition can replace the goal and exits. Fine detail is selective rather than a checklist, action limits are ceilings rather than quotas, and output quality does not reward word count.
+Scene setup is returned in the initial existing routing call, and progress checks share the existing Director/State Coder audit call. Progress assessment itself adds no per-turn call; action admission has a separate consistency check described below. Contracts stay stable within a scene; Director may tune pacing/detail/scale, and a transition can replace the goal and exits. Fine detail is selective rather than a checklist, action limits are ceilings rather than quotas, and output quality does not reward word count.
 
 ### 连线、感知与执行顺序
 
@@ -182,3 +191,30 @@ Scene setup is returned in the initial existing routing call, and progress check
 - 连续模式的表达式解析、system/user prompt 模板与外接 Agent 请求都使用同一受限上下文，不能通过引用其他节点的输出绕过投影。共享背景激活查询也不读取私有认知字段。
 - Director 的共享指导和场景契约被提示不得转述未公开的秘密；这层语义约束不能被字段投影证明，模型若把秘密写进公开 `action` 仍可能泄露。面向当前本地单用户，Full Log/Trace 仍是有权查看私有证据的审计视图，不是给所有 Agent 公开的聊天频道。
 - 单次模拟仍逐节点 await，后续节点可见先前已完成且获准投递的本轮行动。队列 Worker 并发的是不同 run。独立节点并行需要另外设计同轮快照、冲突合并及取消语义，本次没有开启。
+
+### 行动接纳与一致性
+
+`execution/action_consistency.py` 是进程内模块，不是新服务、节点或状态系统。连续模拟先生成候选，再检查，最后才写 `succeeded`、投递给其他角色、写记忆及进入 State Coder。传统 DAG 执行和最终报告写作不经过这个门；本模块也不撤销外接 Agent 已执行的外部副作用。
+
+`execution/action_output.py` 单独负责角色行动结构与外接文本适配。先校验 JSON/字段再调用语义检查器，坏响应不会自动降级为正文或默认行动。participation/action 必填，act 正文非空，私有意图可为空而不编造；额外 actor state_updates 不进入持久化。内置结构修复与语义修复共享最多两个候选；外接任务仍只执行一次。结构失败通过同一 action_checked v3 记录安全字段错误和响应摘要，不记录坏正文、不调用第二个模型替代格式校验。
+
+- 固定六类检查原则：时空、实体存在/当前状态、能力/资源/权限、知识与通信边界、因果与结果归属、既定设定/研究证据。具体规则来自用户设定和实际状态，不写领域词表、物理引擎或人物性格评分，不做内容分级。
+- 检查器读取初始环境、完整启用背景条目、实体定义、当前世界坐标、含私有内容的 Dynamic State、最近 12 条已接纳的公开行动，以及行动者实际获得的 context/role。规则不受背景激活关键词和正文预算影响；背景 belief/rumor/assumption 必须保留其不确定性。旧事实仍需由已有状态/记忆机制保留，检查不是无限历史检索保证。
+- 检查器是有权审计私有材料的模型调用，沿用平台 Provider/default model；不会把完整检查上下文发给其他角色或外接 Agent。传输配置不进入证据投影。模型输出 `accept/conflict/uncertain`，非接受判断必须引用实际证据 ID；代码强制验证格式/引用存在性，但不声称证明引用的语义正确。
+- 尝试、提议、说谎和误解本身可以是有效行动；不能自动等同于成功、他人同意或验证过的研究结论。已建立的例外可以改变有效行动范围。未知细节不自动构成冲突；实质性结果缺少必要依据时不把它接纳为已发生事实。
+- 内置 LLM 节点最多重新生成一次并重新检查；修正通知是固定通用文本，不复制审查者看到的秘密或理由。外接 Agent 不自动重发。仍冲突/不确定、无效检查输出、超时或预算异常时停止为可检查的失败，保留先前行动和权威状态，不自动放行、改写角色行动或无限重试。
+- 每次检查写入已有 `run_events` 的 `action_checked`，保留候选、判断、所引证据快照和检查输入摘要指纹；成功事件通过 trace parent 指向对应检查。候选不是有效行动或新的回滚检查点。原始技术证据可由本地用户在 Events/Trace/Full Log 查看；Live、可读过程与报告素材只使用已接纳输出。
+- 状态消费端保留 evidence_kind/source_refs/confidence；通用节点不再把缺少认识论标记的值渲染成 Authoritative Dynamic State。State Coder 仍复用现有 Director 审计，没有新增核实服务或状态层。
+- 每个候选增加一次逻辑模型调用；一次修正另增一次角色调用和一次检查，Provider 原有有限传输重试策略不变。Eval 的统一调用/Token/费用估算预算覆盖这些调用，不自动增加预算。检查 JSON 输入超过 `AUV_ACTION_CHECK_MAX_CHARS`（默认 64000）时明确失败，不静默裁掉规则；这是工程字符限额，不是供应商上下文容量或账单保证。
+
+这道门减少矛盾的提前传播，不能保证模型永不误判或漏判。大规模场景的检查上下文、逐候选调用成本和真实模型语义效果仍需单独验收。
+
+### 计划解析错误与重试
+
+`plan_generation.py` 负责结构化计划的解析、最小参与者结构验证及有界重新生成，`plan_compiler.py` 只做模式/工作流构建。网页 `/api/templates/compile` 和后端真实验收调用同一个编译函数，不存在“后端测试专用”的草案生成逻辑。
+
+无效 JSON、`finish_reason=length/max_tokens` 和缺少有效 goal/roles 分别记录为 `invalid_json/output_truncated/invalid_plan_schema`，最多重新生成一次紧凑完整 JSON，不自动提高输出限额。请求/预算异常保留原异常链并向上传递，不再返回启发式草案；无 Key 的 mock 回复明确报 `model_not_configured`。日志记录类型、供应商状态、结束原因及响应字符数，不保存角色私密正文或凭据。成功返回 `generation.attempts/recovered_errors`；耗尽后给前端结构化 502 错误，API 客户端仅显示 message，保留 code/diagnostics 供程序处理。
+
+Provider 原有有限传输重试与计划重新生成职责分离；400/401/402/403/404/422 等不可恢复错误不盲重试，预算异常不被当成格式错误再次调用。真实 Eval 在计费层统计每次物理尝试，不能用内层隐藏重试绕过额度。自然语言验收先由模型生成工作流，再施加测试轮数/行动/输出限额，不预写角色行动；编译失败也保存一份精简结果。
+
+连续模拟的报告素材仅采用成功实体输出和用户证据，不再把派生 summary 当作新的事实来源；DAG 的最终汇总仍可作为产物素材。文学适配明确保留未回答问题与未决定事项，不能为收尾代替角色回应或成交。此提示词约束不是语义证明；真实样本仍发现越界补写，人工验收不能被成功状态或规则分数替代。

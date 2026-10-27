@@ -6,13 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from ..narrative import narrative_prompts
+from ..narrative_fidelity import REVIEW_PROMPT, generate_grounded_narrative
 
 COMMON_CRITERIA = {
     "fidelity": "Preserve the source's actors, causal facts and outcome; do not invent consequential events or hidden knowledge.",
     "readability": "Coherent, natural, understandable writing with distinguishable character voices.",
     "economy": "Every detail serves the requested work; no repeated beats or padding. Purposeful richness is allowed and brevity alone earns no bonus.",
 }
-PROMPT_VERSION = 1
+PROMPT_VERSION = 3
 SCORE_ANCHORS = "0 absent, 1 major failures, 2 mixed, 3 mostly meets, 4 fully meets"
 
 
@@ -36,6 +37,7 @@ def benchmark_identity(source: str, profiles: list[dict[str, Any]]) -> dict[str,
     contract = {
         "profiles": profiles, "criteria": COMMON_CRITERIA, "anchors": SCORE_ANCHORS,
         "writer": narrative_prompts(source="", style="", language="Chinese", audience="general", length="short"),
+        "fidelity_review": REVIEW_PROMPT,
     }
     return {
         "source_hash": source_fingerprint(source), "prompt_version": PROMPT_VERSION,
@@ -45,9 +47,10 @@ def benchmark_identity(source: str, profiles: list[dict[str, Any]]) -> dict[str,
 
 
 async def generate_sample(provider: Any, source: str, profile: dict[str, Any]) -> dict[str, Any]:
-    system, user = narrative_prompts(source=source, style=profile["prompt"], language="Chinese", audience="general", length="short")
-    response = await provider.chat(model="", system_prompt=system, user_prompt=user)
-    return {"style": profile["id"], "version": profile["version"], "text": str(response.get("content", "")).strip()}
+    text, fidelity = await generate_grounded_narrative(
+        provider, source=source, style=profile["prompt"], language="Chinese", audience="general", length="short",
+    )
+    return {"style": profile["id"], "version": profile["version"], "text": text, "fidelity": fidelity}
 
 
 async def judge_samples(provider: Any, source: str, samples: list[dict[str, Any]], profiles: list[dict[str, Any]]) -> dict[str, Any]:
@@ -65,7 +68,7 @@ async def judge_samples(provider: Any, source: str, samples: list[dict[str, Any]
             f"SHARED CRITERIA: {json.dumps(COMMON_CRITERIA)}\n"
             f"PROFILES: {json.dumps(profiles, ensure_ascii=False)}\n"
             f"SOURCE: {source}\n"
-            f"CANDIDATES: {json.dumps(samples, ensure_ascii=False)}"
+            f"CANDIDATES: {json.dumps([{key: item.get(key) for key in ('style', 'text')} for item in samples], ensure_ascii=False)}"
         ),
     )
     raw = str(response.get("content", "")).removeprefix("```json").removeprefix("```").removesuffix("```").strip()

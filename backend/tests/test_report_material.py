@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import settings
 from app.db import Base
 from app.models import NodeRunRecord, RunRecord
+from app.narrative_fidelity import NarrativeFidelityError
 from app.schemas import RunReportRequest, WorkflowDefinition
 from app.service import generate_run_report, upsert_workflow
 
@@ -42,6 +43,8 @@ class Writer:
         self.prompts = []
 
     async def chat(self, model, system_prompt, user_prompt):
+        if "literary fidelity checker" in system_prompt:
+            return {"content": '{"decision":"accept","findings":[]}'}
         self.prompts.append(user_prompt)
         return {"content": "# Result\n\nThe ending is preserved."}
 
@@ -56,6 +59,7 @@ def test_report_preserves_beginning_middle_ending_and_supplied_evidence(report_d
         assert marker in prompt
     assert prompt.count("BEGIN") == 1
     assert result.mode == mode
+    assert (result.fidelity is not None) == (mode != "briefing")
 
 
 def test_oversized_source_fails_before_any_model_call(report_db, monkeypatch):
@@ -66,3 +70,41 @@ def test_oversized_source_fails_before_any_model_call(report_db, monkeypatch):
     assert exc.value.status_code == 413
     assert "AUV_REPORT_SOURCE_MAX_CHARS=100" in exc.value.detail
     assert writer.prompts == []
+
+
+@pytest.mark.parametrize("continuous", [True, False])
+def test_continuous_narrative_does_not_promote_derived_summary_into_events(report_db, continuous):
+    workflow = WorkflowDefinition(id="report", name="report", nodes=[], edges=[],
+        environment={"simulation": {"execution_model": "continuous" if continuous else "dag"}})
+    upsert_workflow(report_db, workflow)
+    report_db.add(NodeRunRecord(run_id="long", node_id="summary_1", status="succeeded",
+        output_json=json.dumps({"content": "UNSUPPORTED-SUMMARY: the pending task was accepted and completed."})))
+    report_db.add(NodeRunRecord(run_id="long", node_id="failed_actor", status="failed",
+        output_json=json.dumps({"content": "REJECTED-OUTPUT"})))
+    report_db.commit()
+    writer = Writer()
+    result = asyncio.run(generate_run_report(report_db, writer, "long", RunReportRequest(mode="narrative")))
+    assert ("UNSUPPORTED-SUMMARY" in writer.prompts[0]) is (not continuous)
+    assert "REJECTED-OUTPUT" not in writer.prompts[0]
+    assert "BEGIN" in writer.prompts[0] and "ENDING" in writer.prompts[0]
+    assert "long" not in result.title
+
+
+def test_rejected_literary_work_does_not_change_saved_actions(report_db):
+    class Unfaithful(Writer):
+        async def chat(self, model, system_prompt, user_prompt):
+            self.prompts.append(user_prompt)
+            if "literary fidelity checker" in system_prompt:
+                return {"content": json.dumps({"decision": "revise", "findings": [{
+                    "candidate_quote": "invented ending", "source_quote": "ENDING",
+                    "reason": "This result does not occur in the source.",
+                }]})}
+            return {"content": "invented ending"}
+
+    original = report_db.query(NodeRunRecord).one().output_json
+    writer = Unfaithful()
+    with pytest.raises(NarrativeFidelityError):
+        asyncio.run(generate_run_report(report_db, writer, "long", RunReportRequest(mode="narrative")))
+    assert len(writer.prompts) == 4
+    assert report_db.query(NodeRunRecord).one().output_json == original
+    assert report_db.query(RunRecord).one().status == "succeeded"

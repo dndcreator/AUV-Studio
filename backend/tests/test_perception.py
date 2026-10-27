@@ -19,7 +19,7 @@ from app.service import verify_run_audit
 
 
 def sample_action():
-    return {"node_id": "a", "actor": "A", "action": "PUBLIC_FINDING", "action_index": 1, "event_seq": 2,
+    return {"node_id": "a", "actor": "A", "participation": "act", "action": "PUBLIC_FINDING", "action_index": 1, "event_seq": 2,
             "intent": "SECRET_INTENT", "observation": "SECRET_OBSERVATION", "self_update": "SECRET_STATE",
             "turn_delta": "SECRET_DELTA", "shared_effect_claim": "SECRET_CLAIM", "future_field": "SECRET_FUTURE"}
 
@@ -109,6 +109,8 @@ def test_real_continuous_runtime_isolates_history_templates_and_owner_recall(con
             self.calls = []
 
         async def chat(self, model, system_prompt, user_prompt):
+            if "action consistency checker" in system_prompt:
+                return {"content": '{"decision":"accept","reason":"Offline fixture.","scope":{"self_owned":true,"public_only":true},"findings":[]}'}
             self.calls.append((system_prompt, user_prompt))
             if "route attention" in system_prompt:
                 return {"content": '{"active_node_ids":["a","b","c"]}'}
@@ -116,14 +118,15 @@ def test_real_continuous_runtime_isolates_history_templates_and_owner_recall(con
                 return {"content": '{"decision":"continue"}'}
             if '"node_id": "a"' in user_prompt.split("ROLE:\n")[-1]:
                 return {"content": json.dumps({key: value for key, value in sample_action().items() if key != "future_field"})}
-            return {"content": '{"action":"A normal public response."}'}
+            return {"content": '{"participation":"act","action":"A normal public response."}'}
 
     database = create_engine("sqlite://")
     Base.metadata.create_all(database)
     provider = Provider()
     with sessionmaker(bind=database)() as db:
         run_id = asyncio.run(WorkflowEngine(provider=provider).run(db, wf, RunRequest()))
-        assert db.get(RunRecord, run_id).status == "succeeded"
+        assert db.get(RunRecord, run_id).status == "stopped"
+        assert json.loads(db.get(RunRecord, run_id).output_json)["completion"]["status"] == "incomplete"
         rows = db.query(NodeRunRecord).filter_by(run_id=run_id).order_by(NodeRunRecord.id).all()
         for row in rows:
             data = json.loads(row.input_json)
@@ -180,10 +183,12 @@ def test_external_agent_http_envelope_receives_only_delivered_public_information
 
     class Provider:
         async def chat(self, model, system_prompt, user_prompt):
+            if "action consistency checker" in system_prompt:
+                return {"content": '{"decision":"accept","reason":"Offline fixture.","scope":{"self_owned":true,"public_only":true},"findings":[]}'}
             if "route attention" in system_prompt:
                 return {"content": '{"active_node_ids":["a","b"]}'}
             if "continuity auditor" in system_prompt:
-                return {"content": '{"decision":"stop"}'}
+                return {"content": '{"decision":"stop","task_complete":true,"completion_reason":"Offline fixture goal reached."}'}
             return {"content": json.dumps(sample_action())}
 
     monkeypatch.setattr("app.execution.nodes.httpx.AsyncClient", Client)

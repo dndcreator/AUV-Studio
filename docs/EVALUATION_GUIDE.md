@@ -12,7 +12,7 @@ Eval 使用固定场景和当前已配置的模型，检查模拟效果是否随
 
 ```powershell
 cd backend
-python -m app.eval_runner --scenario boundary_autonomy --max-calls 15 --max-total-tokens 40000 --max-output-tokens 600 --max-cost-usd 0.08
+python -m app.eval_runner --scenario boundary_autonomy --max-calls 24 --max-total-tokens 40000 --max-output-tokens 600 --max-cost-usd 0.08
 # 仅在明确同意本次费用后追加 --execute；默认不运行 Judge。
 ```
 
@@ -42,16 +42,16 @@ python -m app.eval_runner --scenario boundary_autonomy --max-calls 15 --max-tota
 
 ```powershell
 cd backend
-python -m app.eval_runner --scenario scene_micro_progress --judge --max-calls 14 --max-total-tokens 48000 --max-output-tokens 900 --max-cost-usd 0.10
-python -m app.eval_runner --scenario scene_micro_progress --execute --judge --max-calls 14 --max-total-tokens 48000 --max-output-tokens 900 --max-cost-usd 0.10
-python -m app.eval_runner --scenario scene_research_progress --execute --judge --max-calls 10 --max-total-tokens 36000 --max-output-tokens 900 --max-cost-usd 0.08
+python -m app.eval_runner --scenario scene_micro_progress --judge --max-calls 20 --max-total-tokens 48000 --max-output-tokens 900 --max-cost-usd 0.10
+python -m app.eval_runner --scenario scene_micro_progress --execute --judge --max-calls 20 --max-total-tokens 48000 --max-output-tokens 900 --max-cost-usd 0.10
+python -m app.eval_runner --scenario scene_research_progress --execute --judge --max-calls 14 --max-total-tokens 36000 --max-output-tokens 900 --max-cost-usd 0.08
 ```
 
 2026-10-19 的实施与真实样本复核见 [Scene Contract 评测记录](./evaluations/2026-10-19-scene-control.md)。该历史记录使用旧版产物格式；当前评审只读取简洁的实际行动与结果文件，不再复制原始 Full Log。
 
 ## 固定文风基准
 
-`writing_styles` 使用同一段固定的还书场景素材，分别生成小说和剧本。不重跑模拟，避免把剧情随机性误认为文风变化；两个生成调用后，可选一个调用一次评审两份成稿。
+`writing_styles` 使用同一段固定的还书场景素材，分别生成小说和剧本。不重跑模拟，避免把剧情随机性误认为文风变化；每份作品正常生成及忠实度核验各一次，发现问题最多修正及复核各一次。两份作品正常四次调用，再可选一次共同文风评分。
 
 写作要求与评分标准保存在 `backend/evals/styles.json`，各自带版本：
 
@@ -63,11 +63,11 @@ python -m app.eval_runner --scenario scene_research_progress --execute --judge -
 
 ```powershell
 cd backend
-python -m app.eval_runner --scenario writing_styles --judge --max-calls 3 --max-output-tokens 900 --max-total-tokens 12000 --max-cost-usd 0.05
-python -m app.eval_runner --scenario writing_styles --execute --judge --max-calls 3 --max-output-tokens 900 --max-total-tokens 12000 --max-cost-usd 0.05
+python -m app.eval_runner --scenario writing_styles --judge --max-calls 5 --max-output-tokens 900 --max-total-tokens 12000 --max-cost-usd 0.05
+python -m app.eval_runner --scenario writing_styles --execute --judge --max-calls 5 --max-output-tokens 900 --max-total-tokens 12000 --max-cost-usd 0.05
 ```
 
-只测试一种形式时添加 `--style novel` 或 `--style screenplay`。也可以在普通模拟评测中添加这些选项，先运行真实模拟，再生成指定形式；每种形式额外一次调用。用户在产品中仍可自由填写文风，不受此处基准限制。
+只测试一种形式时添加 `--style novel` 或 `--style screenplay`。也可以在普通模拟评测中添加这些选项，先运行真实模拟，再生成指定形式；每种形式正常额外两次逻辑调用，发生修正最多四次。上述五次预算不预留全部修正或传输重试，额度不足会停止，不自动扩容；可先预检再自行决定上限。用户在产品中仍可自由填写文风，不受此处基准限制。提示词与核验契约版本已提升至 3，避免与旧的无核验基准混比。
 
 固定素材、写作要求、评分标准和评审模型一致时，记录才显示上次同配置的分差；内容指纹和版本避免修改标准后仍比较旧分数。若修改评审提示词的评分含义，应提升 `PROMPT_VERSION`。更换模型同时更换了当前评审模型，不直接比较旧分差。
 
@@ -79,6 +79,7 @@ python -m app.eval_runner --scenario writing_styles --execute --judge --max-call
 
 - 至少捕获一项持久事实，但活动概念不超过四项。
 - 每个状态引用准确的节点、行动序号和事件序号。
+- 状态值标记为 recorded，区分 claim/observation/action/inference；来源存在或 confidence=1 不等于独立证实，类别含义仍需实际样本人工检查。
 - 私有状态只能由其 owner 的行动建立。
 - 不把皱眉、叹气、目光、心跳、语气等瞬时叙事细节写入状态。
 
@@ -90,7 +91,17 @@ python -m app.eval_runner --scenario dynamic_state_quality
 python -m app.eval_runner --scenario dynamic_state_quality --execute --judge
 ```
 
-该场景预计约 9 次产品调用；`--judge` 额外增加一次评审调用，仍受统一调用、Token 和估算费用上限约束。
+该场景原预计约 9 次产品调用；当前最多四条行动另增四次一致性检查，`--judge` 再增加一次评审调用，仍受统一调用、Token 和估算费用上限约束。
+
+## 行动一致性检查预算与证据
+
+连续模拟现在逐候选进行接纳前检查。预检会在场景原估算上加行动上限对应的检查次数；一次内置节点修正可另增两次调用。硬上限不会自动放宽，调用额度不足时 `--execute` 会在运行前拒绝；不带 `--execute` 仍只显示预检与预算不足提示。默认 roleplay_basic 的 12 次额度不足当前估算，需要显式设置至少 14 次，或改用更小的场景。原有 Token/费用上限保持不变，所以增加调用额度不保证完整跑完。
+
+当前每个候选会把实际约束交给检查模型，成本高于此前仅做阶段审计。最新 Markdown 仍只保存一份；`Action Checks` 简要列出检查次数与未接纳候选，明确它们不曾成为有效模拟行动，不复制完整检查上下文或 raw Provider 数据。语义误判、对真实矛盾的识别率、自然语言秘密泄露和长程质量仍需人工读实际样本；普通离线测试只证明拒绝/修正/传播隔离等工程路径，不证明模型检查准确。
+
+行动结构门与流程评分共用 ParticipantAction：participation/action 必需，act 非空，wait/observe 可空，不能以缺少私有 intent 作为协议失败。坏 JSON/错误字段/截断回复在语义检查前拒绝；内置格式重生成与语义修正共享候选上限，外接任务不重执行。结构校验本身不增加模型请求，可能的重生成仍受原预算限制。离线假 checker 接受只用于证明合法结构如何继续，不能将它解释为对谎言、角色越权或事实分类的模型准确率。
+
+本次实现未执行新的真实模型调用。历史真实样本发生在接纳门加入之前，不作为本机制的语义验收证据。
 
 ## 预检
 
@@ -128,7 +139,7 @@ World Book、节点私有信息和跨 60 轮依赖使用独立的按需评测，
 - 估算费用上限 0.10 美元。
 - 输入价格假设：1.00 美元/百万 Token。
 - 输出价格假设：4.00 美元/百万 Token。
-- Eval 禁用 Provider 自动重试。
+- Eval 禁用底层隐藏重试；预算层对可恢复 Provider 错误最多退避重试一次，每次物理请求及失败预留都计入同一上限。鉴权、余额、参数或预算问题不盲目重试。
 - 官方 DeepSeek 端点在 Eval 中使用非思考模式，避免短结构化任务的推理 Token 吞掉输出预算；正常产品运行配置不受影响。
 
 该默认档位已用内置 `roleplay_basic` 场景完成一次真实端点验证；不同模型的上下文计费和输出行为仍可能不同，执行前应先运行预检。
@@ -157,6 +168,8 @@ CLI 还限制：最多 40 次调用、100,000 Token、单次 4,000 输出 Token�
 
 普通 Eval 每个场景只维护一个 `backend/evals/results/{场景名}.md`，再次执行覆盖该场景的最新记录：
 
+精简元数据另含 `completion` 和 `diagnostics`：模型用途归类的调用/Token/失败预留统计、初始阶段/坐标、最近两次 Director 完成判断与场景控制。分类依据现有系统提示词，无匹配归 other，不保存提示词或原始模型响应，不等于供应商账单分类。可以据此区分规划、角色、检查与审计的成本；旧记录不能追补这些缺失证据。
+
 - 正文保存一次：固定素材与各形式成稿，或实际角色行动与结局。
 - 附简短评语、失败项、调用次数和估算费用，不保存提示词、原始 Provider 数据或重复全量日志。
 - 文件首行包含精简的比较元数据，供下次读取；不再另外生成 JSON 文件。旧版历史产物不自动删除。
@@ -174,3 +187,36 @@ CLI 还限制：最多 40 次调用、100,000 Token、单次 4,000 输出 Token�
 - 最终输出是否忠于过程。
 - 效果是否匹配成本和延迟。
 - 相比上次是提升、持平还是退化。
+
+## 自然语言公会开场验收
+
+`fantasy_opening` 只保存用户需求，不预填人物行动或工作流。执行时走产品同一计划编译器，再用两名角色、最多两轮/三条行动运行，调用现有小说适配器；角色、任务和对白仍由模型生成。测试限制只是成本上限，不代表剧情已经自然结束。
+
+```powershell
+cd backend
+python -m app.eval_runner --scenario fantasy_opening --max-calls 18 --max-total-tokens 50000 --max-output-tokens 3200 --max-cost-usd 0.08
+# 明确同意费用后追加 --execute；无需 --judge。
+```
+
+3200 是解析阶段的单次输出上限，场景运行与写作降为 850，不自动提高预算。预检不收费。JSON 格式/截断最多要求重生成一次，实际传输重试也计入上述请求上限。解析异常不再静默退回预设角色；失败原因和恢复次数保存在同一份最新 Markdown 中。
+
+2026-10-25 修正后的真实模拟完成：计划一次解析成功，三条实体行动均通过接纳检查。初次文学适配却编造了签约/离场，故修正素材边界并仅用保存的三条行动重写；请求 14/15 连接失败（含一次预算内重试），连接检查后请求 16 返回作品。当前累计 16 次、38412 input + 6130 output/reserved tokens，按输入 $1/M、输出 $4/M 估算 $0.062932，不是实际账单。
+
+该次人工复核判文学忠实度未通过：作品补写了接待员未实际说出的“猫那么大”“是一窝”等任务信息。模拟成功、生成成功和质量通过必须分别记录。早先失败尝试的 6 次请求属于上一轮独立预算，记录在 changelog。
+
+随后经用户另行授权，只对保存的三条行动进行成稿核验复测，未重跑模拟，单独上限 4 次物理请求 / 0.03 美元估算。实际 4 次，4056 input + 928 output tokens，估算 $0.007768，无传输重试、无额外文风评分。核验拦下首稿虚构的接待员答复、鼠患信息与计价条款；修正后复核 accept。人工阅读确认没有新增重大答复/接取/离场，故短片段忠实度通过，但文字仍接近对白整理，文学表现力基础，不能推广为长篇或多风格质量保证。最新单份 Markdown 保留最终作品、原始行动、核验摘录和两次预算的分别统计，不伪造模拟已自然结束。
+
+## 西方奇幻复仇结尾
+
+`fantasy_revenge_ending` 从最终对峙开始：父王遇害、叔父篡位、王子已掌握证据是必要前情，不预设人物命运。两名角色、至多三轮/六条行动，要求实际解决核心复仇冲突并呈现代价。`fantasy_tragedy` 是独立的版本化写作风格，明确中文输出不改变西方奇幻文化背景，不再套用克制现实主义小说预设。
+
+```powershell
+python -m app.eval_runner --scenario fantasy_revenge_ending --max-calls 24 --max-total-tokens 80000 --max-output-tokens 3200 --max-cost-usd 0.10
+# 用户明确同意后才追加 --execute；预检不收费。
+```
+
+`require_director_completion` 现在要求 Director stop、task_complete=true 且有非空 completion_reason，与执行器共用判据；这仍不能替代人工阅读实际行动确认终局。达到安全上限必须如实视为未完成，改写器不得补写结局。默认不加独立收费评分器。
+
+行动核验格式不合规时，对同一候选最多重新核验一次，候选不进入事实，也不重发角色或外接 Agent。两次均无效则失败；预算、输入长度和网络错误不会被当作格式问题绕过。每次核验均记录独立尝试和真实提示词摘要，精简结果仅保留安全的协议诊断，不复制原始响应。预检估算不是所有修正/传输重试的最坏调用数，实际硬预算始终优先。
+
+2026-10-26 实测未通过：首轮四请求因核验格式失败停止，修正协议恢复后在同一累计预算内重启。总计 18 次实际请求、65759 input + 7673 output tokens，估算 $0.096451；下一次审计在发送前被费用预检拦下。只有四条已接受行动，仍在谈判，无完成结局，也未调用文学适配。已接受的王子行动还写入了叔父的台词和反应，说明角色自主权检查存在漏判；一次拒绝又疑似混淆初始场景与空坐标，尚不能从精简记录判定是注入遗漏还是语义误判。保留失败样本，不以西式人名、规则分数或离线测试通过替代叙事验收，不自动追加预算。

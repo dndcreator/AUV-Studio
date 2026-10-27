@@ -14,7 +14,10 @@ from ..models import NodeRunRecord, RunRecord
 from ..schemas import RunRequest, WorkflowDefinition, WorkflowEdge, WorkflowNode
 from .nodes import HumanInterventionRequired, execute_node, resolve_inputs
 from .provider import OpenAICompatibleProvider
-from .perception import actions_for_node, incoming_interactions, participant_context, public_action
+from .action_consistency import admit_action, build_consistency_evidence
+from .perception import actions_for_node, incoming_interactions, participant_context, participant_roster, public_action
+from .completion import completion_result, execution_allowance
+from .entity_contracts import entity_detail_instruction
 from .context_book import activation_trace, build_scene_context_pack, context_for_node, environment_for_runtime
 from .dynamic_state import (
     apply_dynamic_state_proposal,
@@ -75,7 +78,6 @@ from .simulation_loop import (
     build_loop_policy,
     build_role_packet,
     is_entity_node,
-    normalize_action_output,
     parse_activation,
     parse_director_control,
 )
@@ -148,6 +150,8 @@ class WorkflowEngine:
     ) -> str:
         db.refresh(run)
         run.status = "stopped"
+        if "actions" in output:
+            output = {**output, "completion": {"status": "incomplete", "reason": "user_stopped"}}
         run.output_json = serialize(output)
         run.error_json = "null"
         run.ended_at = datetime.now(timezone.utc)
@@ -334,6 +338,7 @@ class WorkflowEngine:
         context.setdefault("_scene_control", init_scene_control())
 
         stop_requested = False
+        control: dict[str, Any] = {}
         action_index = int(resume.get("action_index", len(recent_actions)) or 0) if isinstance(resume, dict) else 0
         start_round = int(resume.get("round", 0) or 0) + 1 if isinstance(resume, dict) else 1
         for round_index in range(start_round, policy.max_rounds + 1):
@@ -448,24 +453,23 @@ class WorkflowEngine:
                     scene_contract=context["_scene_control"]["contract"],
                 )
                 context_packet["interactions"] = interactions
+                context_packet["environment"] = {key: value for key, value in context.get("_runtime_environment", {}).items()
+                                                 if key != "simulation"}
+                context_packet["execution_allowance"] = execution_allowance(self.provider, policy, round_index - 1, action_index)
                 context_packet["communication"] = {
                     "mode": "directed" if communication_edges else "shared_scene",
                     "incoming": [edge.model_dump() for edge in communication_edges if edge.target == node.id],
                     "outgoing": [edge.model_dump() for edge in communication_edges if edge.source == node.id],
-                    "known_participants": [
-                        {"node_id": peer.id, "name": str(peer.config.get("entity_name") or peer.id),
-                         **({"role": str(peer.config.get("role", "custom"))} if peer.id == node.id else {})}
-                        for peer in entities if peer.id == node.id or any(
-                            {edge.source, edge.target} == {node.id, peer.id} for edge in communication_edges
-                        )
-                    ],
+                    "known_participants": participant_roster(entities, node.id, communication_edges),
                 }
                 role_packet = build_role_packet(node, memories)
+                role_packet["detail_rule"] = entity_detail_instruction(str(role_packet["entity_type"]), node_simulation_state)
                 runtime_input = {
                     **resolve_inputs(node, execution_context),
                     "prompt": action_instruction(context_packet, role_packet),
                     "context": context_packet,
                     "role": role_packet,
+                    "_participant_turn": True,
                     "_environment": context.get("_runtime_environment", {}),
                     "_context_pack": node_context_pack,
                     "_memory": memories,
@@ -484,6 +488,9 @@ class WorkflowEngine:
                     last_event_hash=last_event_hash,
                     caused_by="simulation_turn",
                     execution_context=execution_context,
+                    consistency_evidence=build_consistency_evidence(
+                        workflow, context.get("_simulation", {}), recent_actions, runtime_input,
+                    ),
                 )
                 action_index += 1
                 simulation_seq += 1
@@ -578,13 +585,14 @@ class WorkflowEngine:
                 simulation_state = context.get("_simulation", {})
                 state_coder_active = isinstance(simulation_state, dict) and dynamic_state_enabled(simulation_state)
                 uncoded_actions = recent_actions[state_coder_cursor:] if state_coder_active else []
-                state_coder_prompt = state_coder_audit_clause(uncoded_actions) if uncoded_actions else ""
+                state_coder_prompt = state_coder_audit_clause(uncoded_actions, actions_in_audit=True) if uncoded_actions else ""
                 control_prompt = scene_audit_instruction(
                     state=context.get("_simulation", {}),
                     scene_control=context["_scene_control"],
                     recent_actions=recent_actions,
                     round_index=round_index,
                     max_actions=policy.max_actions,
+                    allowance=execution_allowance(self.provider, policy, round_index, action_index),
                     connections=[edge.model_dump() for edge in communication_edges],
                     participants=[{"node_id": participant.id, "name": node_subject(participant),
                                    "role": str(participant.config.get("role", "custom")),
@@ -718,14 +726,18 @@ class WorkflowEngine:
             )
             context[summary.id] = final_output
 
-        run.status = "succeeded"
+        completion = completion_result(control, action_count=action_index, action_limit=policy.max_actions)
+        run.status = "succeeded" if completion["status"] == "completed" else "stopped"
         run.output_json = serialize(
-            {"actions": recent_actions, "final": final_output, "simulation": context.get("_simulation", {}), "scene_control": context.get("_scene_control", {})}
+            {"actions": recent_actions, "final": final_output, "simulation": context.get("_simulation", {}),
+             "scene_control": context.get("_scene_control", {}), "completion": completion}
         )
         run.error_json = "null"
         run.ended_at = datetime.now(timezone.utc)
         db.add(run)
         db.commit()
+        emit_event(db, run.id, "run_control", "succeeded" if run.status == "succeeded" else "stopped",
+                   {"completion": completion}, caused_by="simulation_completion", prev_hash=load_last_event_hash(db, run.id)[1])
         return run.id
 
     async def _execute_continuous_node(
@@ -741,6 +753,7 @@ class WorkflowEngine:
         last_event_hash: str,
         caused_by: str,
         execution_context: dict[str, Any] | None = None,
+        consistency_evidence: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], int, int, str]:
         node_run = NodeRunRecord(
             run_id=run_id,
@@ -774,11 +787,35 @@ class WorkflowEngine:
             prev_hash=last_event_hash,
         )
         start = perf_counter()
+        admission_seq: int | None = None
         try:
-            output = await execute_node(node=node, node_input=runtime_input, context=execution_context if execution_context is not None else context, provider=self.provider)
+            async def generate(actor_input: dict[str, Any]) -> dict[str, Any]:
+                return await execute_node(
+                    node=node, node_input=actor_input,
+                    context=execution_context if execution_context is not None else context, provider=self.provider,
+                )
+
+            if caused_by == "simulation_turn":
+                if consistency_evidence is None:
+                    raise ValueError("Continuous actions require consistency evidence before acceptance.")
+
+                def record_check(payload: dict[str, Any]) -> None:
+                    nonlocal last_event_hash, admission_seq
+                    admission_seq, last_event_hash = emit_event(
+                        db, run_id, node.id, "action_checked", payload,
+                        caused_by="action_consistency", prev_hash=last_event_hash,
+                    )
+
+                output = await admit_action(
+                    provider=self.provider, runtime_input=runtime_input, evidence=consistency_evidence,
+                    generate=generate, record=record_check,
+                    can_regenerate=node.type == "agent" and str(node.config.get("execution_mode", "builtin_llm")).strip().lower() == "builtin_llm",
+                )
+            else:
+                output = await generate(runtime_input)
         except Exception as exc:
             duration = int((perf_counter() - start) * 1000)
-            error = {"message": str(exc), "node_id": node.id}
+            error = {"type": type(exc).__name__, "message": str(exc).strip() or type(exc).__name__, "node_id": node.id}
             node_run.status = "failed"
             node_run.ended_at = datetime.now(timezone.utc)
             node_run.duration_ms = duration
@@ -797,11 +834,6 @@ class WorkflowEngine:
             )
             raise
         duration = int((perf_counter() - start) * 1000)
-        if caused_by == "simulation_turn":
-            context_packet = runtime_input.get("context", {})
-            round_index = int(context_packet.get("round", 1) or 1) if isinstance(context_packet, dict) else 1
-            action_index = int(context_packet.get("action_index", 1) or 1) if isinstance(context_packet, dict) else 1
-            output = normalize_action_output(output, round_index=round_index, action_index=action_index)
         next_state = (
             context.get("_simulation", {})
             if caused_by == "simulation_turn"
@@ -828,6 +860,7 @@ class WorkflowEngine:
             {"input": runtime_input, "output": output, "error": None, "simulation_state": next_state},
             duration_ms=duration,
             caused_by=caused_by,
+            parent_event_ids=[admission_seq] if admission_seq is not None else None,
             prev_hash=last_event_hash,
         )
         return output, duration, success_seq, last_event_hash
@@ -940,6 +973,7 @@ class WorkflowEngine:
                     "actions": context.get("simulation_actions", []),
                     "simulation": context.get("_simulation", {}),
                     "scene_control": context.get("_scene_control", {}),
+                    "completion": {"status": "incomplete", "reason": "execution_failed"},
                 })
                 run.ended_at = datetime.now(timezone.utc)
                 db.add(run)
