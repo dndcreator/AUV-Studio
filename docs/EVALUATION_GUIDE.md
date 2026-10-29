@@ -4,7 +4,7 @@
 
 ## 当前统一入口
 
-分层执行、19项独立行为案例、17项待人工审阅的Judge校准样本、费用上限、版本化基线和退出码统一见 [TESTING.md](TESTING.md)。审计与覆盖矩阵见 [TEST_AUDIT.md](TEST_AUDIT.md)。下述既有模拟/文风场景继续保留，但“流程成功”和“语义质量通过”现在分别记录；`eval_runner --execute` 缺少可靠语义验收时退出3，不再默认为质量通过。`--judge` 必须独立配置 AUV_EVAL_JUDGE_BASE_URL/MODEL/API_KEY，不自动复用Actor密钥；调用仍共用原有预算，不自动加额度。
+分层执行、41项能力/系统案例、17项待人工审阅的Judge校准样本、费用上限、版本化基线和退出码统一见 [TESTING.md](TESTING.md)。逐能力Gold判据及三个短系统任务见 [GOLD_CASES.md](GOLD_CASES.md)，审计矩阵见 [TEST_AUDIT.md](TEST_AUDIT.md)。下述既有模拟/文风场景继续保留，但“流程成功”和“语义质量通过”分别记录；`eval_runner --execute` 缺少可靠语义验收时退出3。`--judge` 必须独立配置 AUV_EVAL_JUDGE_BASE_URL/MODEL/API_KEY，不自动复用Actor密钥；调用仍共用原有预算。
 
 ## 目标
 

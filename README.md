@@ -133,4 +133,5 @@ $env:AUV_VIDEO_API_KEY="your_video_key"
 - [真实模型效果评测](./docs/EVALUATION_GUIDE.md)
 - [分层测试与评测执行](./docs/TESTING.md)
 - [测试资产审计与覆盖矩阵](./docs/TEST_AUDIT.md)
+- [Gold Cases 与跨模块任务](./docs/GOLD_CASES.md)
 - [变更记录](./docs/CHANGELOG.md)

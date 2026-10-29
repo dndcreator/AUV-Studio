@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .evaluation.acceptance import compare_baseline, fingerprint
-from .evaluation.benchmarks import ASSETS, calibration_report, calibration_status, judge_identity, load_cases, provider_identity, summarize
+from .evaluation.benchmarks import ASSETS, calibration_report, calibration_status, case_fingerprint, judge_identity, load_cases, provider_identity, summarize
 from .evaluation.budget import BudgetedProvider, EvalBudget, EvalBudgetExceeded
 from .evaluation.judging import JudgeProtocolError, RUBRICS, build_judge_provider, judge_evidence
 from .evaluation.targets import run_target
@@ -83,7 +83,13 @@ async def execute_cases(
                 output = await run_target(case, actor)
                 row["output"] = output
                 evidence = target_evidence(case, output)
+                if case["capability"] == "system" and output.get("report_error"):
+                    row.update(status="error", stage="deliverable", failure_type="deliverable_error", error=output["report_error"])
+                    return
                 if case["capability"] == "system":
+                    if output.get("status") == "failed":
+                        row.update(status="error", stage="simulation", failure_type="simulation_error", error=output.get("error"))
+                        return
                     if output.get("status") != "succeeded":
                         row.update(status="fail", failure_type="task_incomplete")
                     if output.get("observed_rounds", 0) < case.get("min_observed_rounds", 0):
@@ -92,7 +98,10 @@ async def execute_cases(
                 row["stage"] = "judge"
                 if len(json.dumps(evidence, ensure_ascii=False)) > 64000:
                     raise ValueError("judge evidence exceeds64k characters; no silent truncation")
-                row["judgment"] = await judge_evidence(judge, case["capability"], evidence, case["requirements"])
+                gold = case.get("gold", {})
+                requirements = case["requirements"] + ("\nCASE ORACLE: " + json.dumps({key: gold[key] for key in
+                    ("pass_conditions", "fail_conditions", "allowed_variants") if key in gold}, ensure_ascii=False) if gold else "")
+                row["judgment"] = await judge_evidence(judge, case["capability"], evidence, requirements)
                 if row["status"] == "not_run":
                     row["status"] = row["judgment"]["verdict"]
                     if row["status"] == "fail":
@@ -145,17 +154,23 @@ async def _execute(args: argparse.Namespace, cases: list[dict[str, Any]], budget
     previous_calibration = _read_record(RESULTS / "calibration_latest.json")
     calibration_states = {cap: calibration_status(gold, previous_calibration, identity, cap) if identity else "not_requested"
                           for cap in {row["capability"] for row in cases}}
+    if not args.calibrate:
+        for cap in calibration_states:
+            if calibration_states[cap] == "calibrated" and any(
+                    case.get("gold", {}).get("review_status") != "approved" for case in cases if case["capability"] == cap):
+                calibration_states[cap] = "provisional_gold"
     rows = await execute_cases(cases, actor, judge, repeat=args.repeat, timeout_seconds=args.timeout_seconds, calibration=args.calibrate)
     summary = summarize(rows)
     summary["by_capability"] = {cap: summarize([row for row in rows if row["capability"] == cap]) for cap in sorted(calibration_states)}
+    summary["by_case"] = {case["id"]: summarize([row for row in rows if row["case_id"] == case["id"]]) for case in cases}
     sources = ("plan_compiler.py", "plan_generation.py", "plan_prompt.py", "execution/engine.py", "execution/nodes.py",
                "execution/action_consistency.py", "execution/action_evidence.py", "execution/scene_control.py",
                "execution/simulation_loop.py", "execution/dynamic_state.py", "execution/state_coding.py", "execution/memory.py",
-               "execution/context_book.py", "execution/perception.py", "narrative.py", "narrative_fidelity.py")
+               "execution/context_book.py", "execution/perception.py", "narrative.py", "narrative_fidelity.py", "evaluation/targets.py")
     implementation = fingerprint({path: fingerprint((Path(__file__).parent / path).read_text(encoding="utf-8")) for path in sources})
     artifact = {
         "schema_version": 1, "created_at": datetime.now(timezone.utc).isoformat(), "mode": "calibration" if args.calibrate else "behavior",
-        "benchmark": {"case_hash": fingerprint(cases), "actor": provider_identity(actor_raw), "judge": identity,
+        "benchmark": {"case_hash": case_fingerprint(cases), "actor": provider_identity(actor_raw), "judge": identity,
                       "budget": asdict(budget), "repeat": args.repeat, "timeout_seconds": args.timeout_seconds},
         "implementation": implementation, "summary": summary, "samples": rows, "usage": actor.usage.model_dump(budget),
         "calibration_status": calibration_states, "judge_identity": identity,
@@ -188,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         cases = [row for row in all_cases if (not args.case or row["id"] in args.case) and
                  (not args.capability or row["capability"] == args.capability)]
         budget = _budget(args)
+        case_fingerprint(cases)  # Broken fixture references must fail before any model request.
         if not cases or (args.execute and not (args.case or args.capability or args.calibrate)):
             raise ValueError("select an explicit case/capability; full paid suites are never implicit")
         expected = args.repeat * sum(1 if args.calibrate else row["estimated_calls"] + int(args.judge) for row in cases)

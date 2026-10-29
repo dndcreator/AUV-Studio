@@ -61,5 +61,16 @@ def compare_baseline(previous: dict[str, Any] | None, current: dict[str, Any]) -
         for key in ("agreement_rate", "false_accept_rate", "false_reject_rate"):
             before, after = previous.get("calibration_report", {}).get(key), current.get("calibration_report", {}).get(key)
             deltas[key] = round(after - before, 6) if before is not None and after is not None else None
-    return {"status": "comparable", "deltas": deltas,
+    case_deltas = {}
+    for case_id, after in new.get("by_case", {}).items():
+        before = old.get("by_case", {}).get(case_id)
+        if not before:
+            continue
+        delta = round(after["pass_rate"] - before["pass_rate"], 6)
+        error_delta = round(after["error_rate"] - before["error_rate"], 6)
+        case_deltas[case_id] = {"observed_direction": "mixed" if delta > 0 and error_delta > 0 else "better" if delta > 0 and error_delta <= 0
+                               else "worse" if delta < 0 or error_delta > 0 else "unchanged",
+                               "pass_rate_delta": delta, "error_rate_delta": error_delta,
+                               "token_delta": after["input_tokens"] + after["output_tokens"] - before["input_tokens"] - before["output_tokens"]}
+    return {"status": "comparable", "deltas": deltas, "by_case": case_deltas,
         "note": "Descriptive repeated-sample comparison, not statistical proof of improvement."}

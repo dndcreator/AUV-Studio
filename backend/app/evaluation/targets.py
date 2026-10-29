@@ -17,8 +17,8 @@ from ..execution.scene_control import apply_scene_audit, init_scene_control, sce
 from ..execution.simulation_loop import action_instruction, build_role_packet, parse_director_control
 from ..execution.state_coding import apply_state_batch, proposal_from_response
 from ..plan_compiler import compile_workflow_from_plan
-from ..schemas import EnvironmentSpec, PlanCompileRequest, RunRequest, WorkflowNode
-from ..service import get_events, get_run
+from ..schemas import EnvironmentSpec, PlanCompileRequest, RunReportRequest, RunRequest, WorkflowNode
+from ..service import create_workflow, generate_run_report, get_events, get_run
 from .long_horizon import build_long_horizon_checkpoints, probe_prompt
 from .scenario import load_scenario
 from .judging import strict_object
@@ -96,7 +96,7 @@ async def _run_system(payload: dict[str, Any], provider: Any) -> dict[str, Any]:
     from ..eval_runner import _validate_scenario_safety
     scenario, workflow = load_scenario(payload["scenario"])
     if scenario.get("plan_text"):
-        compiled = await compile_workflow_from_plan(provider, PlanCompileRequest(plan_text=scenario["plan_text"], max_agents=2))
+        compiled = await compile_workflow_from_plan(provider, PlanCompileRequest(plan_text=scenario["plan_text"], max_agents=int(scenario.get("max_agents", 2))))
         workflow = compiled.workflow
         limits = scenario.get("run_limits", {})
         workflow.environment.simulation["horizon_rounds"] = min(24, int(limits.get("rounds", 2)))
@@ -109,13 +109,14 @@ async def _run_system(payload: dict[str, Any], provider: Any) -> dict[str, Any]:
     Base.metadata.create_all(engine)
     try:
         with sessionmaker(bind=engine)() as db:
+            create_workflow(db, workflow)
             run_id = await WorkflowEngine(provider).run(db, workflow, RunRequest(input=scenario.get("input", {})))
             detail = get_run(db, run_id)
             events = get_events(db, run_id, after_seq=0, limit=10000).events
             output = {**detail.output}
             simulation = output.get("simulation", {})
             output["simulation"] = {**simulation, "dynamic_state": compact_dynamic_state(simulation.get("dynamic_state", {}), include_private=True)}
-            return {"status": detail.status, "task": scenario.get("plan_text") or scenario.get("input", {}),
+            result = {"status": detail.status, "task": scenario.get("plan_text") or scenario.get("input", {}),
                     "roles": {node.id: {key: node.config[key] for key in ("entity_name", "role", "entity_profile", "identity_contract") if key in node.config}
                               for node in workflow.nodes if node.type == "agent"},
                     "observed_rounds": max((row.get("round", 0) for row in detail.output.get("actions", [])), default=0),
@@ -131,5 +132,15 @@ async def _run_system(payload: dict[str, Any], provider: Any) -> dict[str, Any]:
                         key: value for key, value in event.payload.items() if key in
                         {"round", "decision", "task_complete", "completion_reason", "progress_assessment"}}}
                         for event in events if event.event == "episode_audited"]}
+            result["deliverable_status"] = "not_requested"
+            if payload.get("deliverable"):
+                result["deliverable_status"] = "skipped_incomplete"
+                if detail.status == "succeeded":
+                    try:
+                        report = await generate_run_report(db, provider, run_id, RunReportRequest.model_validate(payload["deliverable"]))
+                        result.update(deliverable_status="generated", report={"text": report.report_markdown, "fidelity": report.fidelity})
+                    except Exception as exc:
+                        result.update(deliverable_status="failed", report_error={"type": type(exc).__name__, "code": getattr(exc, "code", "report_error")})
+            return result
     finally:
         engine.dispose()

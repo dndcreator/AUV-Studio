@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +16,7 @@ ASSETS = Path(__file__).resolve().parents[2] / "evals"
 def load_cases(calibration: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     data = json.loads((ASSETS / ("judge_calibration.json" if calibration else "behavior_cases.json")).read_text(encoding="utf-8"))
     cases = data["cases"]
-    if data.get("version") != 1 or not cases or len({row["id"] for row in cases}) != len(cases):
+    if data.get("version") != (1 if calibration else 2) or not cases or len({row["id"] for row in cases}) != len(cases):
         raise ValueError("invalid or duplicate evaluation cases")
     for row in cases:
         if row.get("capability") not in RUBRICS or not isinstance(row.get("requirements"), str):
@@ -28,7 +29,29 @@ def load_cases(calibration: bool = False) -> tuple[dict[str, Any], list[dict[str
         elif row["capability"] == "actor" and set(row["input"].get("role", {})) - {
                 "entity_type", "entity_name", "role", "entity_profile", "identity_contract", "behavior_prompt", "responsibilities"}:
             raise ValueError("behavior cases cannot override endpoints or execute external agents/tools")
+        if not calibration:
+            gold = row.get("gold", {})
+            if (gold.get("version") != 1 or gold.get("review_status") not in {"pending_human", "approved"}
+                    or any(not isinstance(gold.get(key), list) or not gold[key] or any(not isinstance(value, str) or not value.strip() for value in gold[key])
+                           for key in ("pass_conditions", "fail_conditions", "allowed_variants"))
+                    or not isinstance(gold.get("contrast_example"), str) or not gold["contrast_example"].strip()
+                    or gold.get("review_status") == "approved" and not str(gold.get("reviewed_by", "")).strip()):
+                raise ValueError("Gold case needs explicit oracles, variation bounds, contrast and truthful review metadata")
     return data, cases
+
+
+def case_fingerprint(cases: list[dict[str, Any]]) -> str:
+    references = {}
+    for case in cases:
+        payload = case.get("input", {})
+        if "scenario" in payload:
+            name = payload["scenario"]
+            if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9_-]+", name):
+                raise ValueError("invalid referenced scenario ID")
+            references[f"scenario:{name}"] = json.loads((ASSETS / "scenarios" / f"{name}.json").read_text(encoding="utf-8"))
+        if case["capability"] == "memory" and "checkpoint" in payload:
+            references["sparse_memory"] = json.loads((ASSETS / "long_horizon" / "worldbook_distributed.json").read_text(encoding="utf-8"))
+    return fingerprint({"cases": cases, "references": references})
 
 
 def provider_identity(provider: Any) -> dict[str, Any]:

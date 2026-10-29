@@ -33,7 +33,7 @@ Windows也可明确使用 `.venv\Scripts\python.exe`。默认 `all` 依次运行
 
 ## 行为案例与独立Judge
 
-`backend/evals/behavior_cases.json` v1包含19项，覆盖8类职责。包括群体被写成单人、跨1500年握手、允许说谎、代写同伴回复、新对白冒充目标完成、瞬时细节污染状态、未经证实的盗窃、旧记忆纠错、秘密隔离、小说/剧本差异、未完成结尾和真实长程覆盖不足。原有固定文风/完整模拟案例继续保留。
+`backend/evals/behavior_cases.json` v2包含41项：7项独立能力各5例，加6项系统任务。每例有通过/失败条件、允许变化和对照示例，覆盖正向、负向、边界与历史问题，详见 [GOLD_CASES.md](GOLD_CASES.md)。Gold本身也需逐例审阅；未确认时即使Judge校准通过也不正式认证。原有固定文风与模拟案例继续保留。
 
 ```powershell
 cd backend

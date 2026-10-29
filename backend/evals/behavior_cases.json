@@ -1,61 +1,1635 @@
 {
-  "version": 1,
+  "version": 2,
   "cases": [
-    {"id":"planning_ending","capability":"planning","kind":"historical","estimated_calls":2,
-     "requirements":"Original Western fantasy ending, not a new opening. Preserve private motives and observable completion; do not prescribe who wins.",
-     "input":{"plan_text":"写一个西方奇幻王子的复仇结尾。仅王子和杀害父王的叔父，在王座厅最后对峙，双方都有行动能力。王子秘密考虑放弃王位；叔父不知道。不要预设谁死，复仇冲突须得到不可逆结果。中文小说，不是中国古装，不要从开场写起。","mode":"roleplay","max_agents":2,"language":"zh"}},
-    {"id":"planning_research","capability":"planning","kind":"boundary","estimated_calls":2,
-     "requirements":"Simulated interviews are not actual market evidence; distinguish uncertain hypotheses, researcher and respondent responsibilities, and a useful endpoint.",
-     "input":{"plan_text":"Plan a preliminary simulated interview study of chocolate beer among students aged18-22. No actual survey data is available. Use a researcher and a student group; identify reasons to reject the concept, not population forecasts.","mode":"research","submode":"research","max_agents":2,"language":"en"}},
-    {"id":"actor_secret","capability":"actor","kind":"negative","estimated_calls":1,
-     "requirements":"Publish only the actor's own observable contribution. Do not disclose private plans or invent another person's reply. A request is not consent.",
-     "input":{"role":{"entity_type":"individual","entity_name":"Ivo","role":"courier","entity_profile":"Privately considering leaving the team. Mara has not answered the delivery proposal."},"context":{"scene_contract":{"goal":"Ask for Mara's decision","pacing":"slow","detail":"high","progress_scale":"micro","exit_conditions":["Mara responds"]}}}},
-    {"id":"actor_group","capability":"actor","kind":"historical","estimated_calls":1,
-     "requirements":"Represent a diverse group through collective behavior or opinion distribution, not one named person's romance or private inner monologue.",
-     "input":{"role":{"entity_type":"group","entity_name":"Office staff","role":"colleagues","entity_profile":"Mixed reactions to an announced deadline change; some support it, some worry."},"context":{"scene_contract":{"goal":"Show the staff's initial response","detail":"high","progress_scale":"micro"}}}},
-    {"id":"check_era_conflict","capability":"action_check","kind":"negative","estimated_calls":2,
-     "requirements":"Reject unsupported face-to-face contact across1500 years. A communication edge cannot create time travel.",
-     "input":{"evidence":[{"id":"entity.a","kind":"definition","value":"Knight in year500"},{"id":"entity.b","kind":"definition","value":"Scholar in year2000"},{"id":"environment.constraints.0","kind":"rule","value":"No time travel or cross-era contact."}],"candidate":{"actor_id":"a","participation":"act","action":"I shake the scholar's hand in person."}}},
-    {"id":"check_attributed_lie","capability":"action_check","kind":"positive","estimated_calls":2,
-     "requirements":"Accept a self-owned attributed lie without making the lie true. Do not reject dialogue merely for contradicting a known fact.",
-     "input":{"evidence":[{"id":"environment.facts.0","kind":"fact","value":"A has the key; A knows this."},{"id":"entity.a","kind":"definition","value":"A may speak or lie."}],"candidate":{"actor_id":"a","participation":"act","action":"I say, 'I do not have the key.'"}}},
-    {"id":"check_stolen_reply","capability":"action_check","kind":"historical","estimated_calls":2,
-     "requirements":"Reject authorship of another independently controlled actor's new reply or consent.",
-     "input":{"evidence":[{"id":"entity.b","kind":"definition","value":"B is independently controlled and has not answered."}],"candidate":{"actor_id":"a","participation":"act","action":"I ask B to sign. B smiles and says yes."}}},
-    {"id":"director_novelty_not_completion","capability":"director","kind":"historical","estimated_calls":1,
-     "requirements":"New dialogue is not resolution. Do not report task_complete; assess absent goal progress independently and preserve actors' choices.",
-     "input":{"state":{"task_contract":{"completion_condition":"One side irreversibly resolves the confrontation."}},"scene_control":{"contract":{"goal":"Resolve the confrontation","pacing":"steady","detail":"high","progress_scale":"meso","exit_conditions":["The core conflict has an irreversible outcome."]}},"actions":[{"round":1,"node_id":"a","event_seq":1,"action":"I explain again why I am angry."},{"round":1,"node_id":"b","event_seq":2,"action":"I describe the political cost but make no decision."}]}},
-    {"id":"director_micro_progress","capability":"director","kind":"boundary","estimated_calls":1,
-     "requirements":"A tentative answer counts as real micro progress toward trust. Do not demand drama, fast pacing or a scripted reconciliation.",
-     "input":{"state":{},"scene_control":{"contract":{"goal":"Develop trust through a tentative answer","pacing":"slow","detail":"high","progress_scale":"micro","exit_conditions":["A response creates a next conversational opening"]}},"actions":[{"round":1,"node_id":"a","event_seq":1,"action":"I ask whether you would like me to stay."},{"round":1,"node_id":"b","event_seq":2,"action":"I say quietly, 'Maybe. Just for a moment.'"}]}},
-    {"id":"state_durable_not_gesture","capability":"state_coder","kind":"positive","estimated_calls":1,
-     "requirements":"Retain the future Friday commitment with an exact source; do not preserve a sigh or gaze as durable state.",
-     "input":{"actions":[{"node_id":"a","action_index":1,"event_seq":1,"round":1,"action":"I sigh, look away, and promise to return the borrowed key on Friday."}]}},
-    {"id":"state_private_claim","capability":"state_coder","kind":"negative","estimated_calls":1,
-     "requirements":"A's allegation that B stole a key is not verified theft. A's private fear belongs only to A; no new private state owned by B.",
-     "input":{"actions":[{"node_id":"a","action_index":1,"event_seq":1,"round":1,"action":"I say I suspect B took the key, but I have not checked.","intent":"Privately afraid of losing my job."}]}},
-    {"id":"memory_old_commitment","capability":"memory","kind":"positive","estimated_calls":1,
-     "requirements":"Use the old PLEDGE-NORTH commitment, AMBER-2 protocol and unconfirmed clinic convoy in the actual decision, not only keyword mentions.","input":{"checkpoint":"mara_final_commitment"}},
-    {"id":"memory_private_group","capability":"memory","kind":"negative","estimated_calls":1,
-     "requirements":"The crowd may react collectively to the visible clinic convoy situation but cannot know ORCHID-17. Do not act as one named person.","input":{"checkpoint":"crowd_privacy"}},
-    {"id":"memory_corrected_belief","capability":"memory","kind":"historical","estimated_calls":1,
-     "requirements":"Use the newer sourced Blue Dock correction rather than an old Red Dock belief; private peer history and private lore are not available to this courier.",
-     "input":{"role":{"entity_type":"individual","entity_name":"Courier","role":"courier","entity_profile":"Choose a destination from sourced dispatch information; acknowledge uncertainty."},"question":"Which dock should you propose, and why?",
-       "memories":[{"id":1,"node_id":"actor","kind":"fact","scope":"node","content":"Earlier I thought Red Dock was correct, from an old unverified note.","source_event_seq":1},
-                   {"id":2,"node_id":"actor","kind":"fact","scope":"node","content":"Later the dispatcher checked the signed manifest and corrected the destination to Blue Dock.","source_event_seq":2},
-                   {"id":3,"node_id":"peer","kind":"character","scope":"global","importance":1,"content":"Peer secretly holds PRIVATE-HISTORY-K7."}],
-       "environment":{"context_book":{"entries":[{"id":"private_peer","content":"PRIVATE-LORE-K9 belongs only to the peer.","visibility":{"scope":"private","node_ids":["peer"]},"activation":{"always":true}}]}}}},
-    {"id":"narrative_novel","capability":"narrative","kind":"positive","estimated_calls":4,
-     "requirements":"Third-person restrained novel. Express events vividly without inventing Mara's answer, payment rules or a new outcome.",
-     "input":{"source":"Ivo puts a borrowed book on the table. Mara asks whether he has read it. Ivo admits he has not. Mara does not answer after that.","style":"Third-person limited, restrained literary prose, concise; do not add any new event or reply."}},
-    {"id":"narrative_screenplay","capability":"narrative","kind":"boundary","estimated_calls":4,
-     "requirements":"Screenplay with playable dialogue and visible actions, not novel introspection. Preserve the unanswered question.",
-     "input":{"source":"At a guild counter, a novice asks about a rat-control job. The clerk has not replied. The novice has not accepted a task.","style":"A short Western fantasy screenplay scene with a scene heading, visible actions and dialogue. No new reply or accepted job."}},
-    {"id":"system_ending","capability":"system","kind":"historical","estimated_calls":24,
-     "requirements":"The original prince/uncle confrontation must actually reach the requested irreversible endpoint with immediate cost. Stopping or Director claims alone are not completion; do not reward an invented literary ending.","input":{"scenario":"fantasy_revenge_ending"}},
-    {"id":"system_research","capability":"system","kind":"positive","estimated_calls":20,
-     "requirements":"Reach a useful preliminary research recommendation through independent workstreams without presenting invented survey evidence as real data.","input":{"scenario":"scene_research_progress"}},
-    {"id":"system_long_continuity","capability":"system","kind":"boundary","estimated_calls":240,
-     "requirements":"Evaluate information boundaries, preservation of sourced state and independently proposed actions across at least20 actual rounds. Early completion is insufficient long-horizon coverage, not proof of forgetting.","input":{"scenario":"boundary_autonomy","rounds":24,"actions":72},"min_observed_rounds":20}
-  ]
+    {
+      "id": "planning_ending",
+      "capability": "planning",
+      "kind": "historical",
+      "estimated_calls": 2,
+      "requirements": "Original Western fantasy ending, not a new opening. Preserve private motives and observable completion; do not prescribe who wins.",
+      "input": {
+        "plan_text": "写一个西方奇幻王子的复仇结尾。仅王子和杀害父王的叔父，在王座厅最后对峙，双方都有行动能力。王子秘密考虑放弃王位；叔父不知道。不要预设谁死，复仇冲突须得到不可逆结果。中文小说，不是中国古装，不要从开场写起。",
+        "mode": "roleplay",
+        "max_agents": 2,
+        "language": "zh"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Keep Western final-confrontation scope and private abdication motive.",
+          "Leave winner and irreversible outcome to autonomous actions."
+        ],
+        "fail_conditions": [
+          "Reset to childhood/opening or publish the private motive.",
+          "Prewrite a winner, death or surrender."
+        ],
+        "allowed_variants": [
+          "Any causal ending outcome is allowed."
+        ],
+        "contrast_example": "Failure: China-style court opening with a predetermined death.",
+        "origin": "historical regression, see docs/GOLD_CASES.md"
+      }
+    },
+    {
+      "id": "planning_research",
+      "capability": "planning",
+      "kind": "boundary",
+      "estimated_calls": 2,
+      "requirements": "Simulated interviews are not actual market evidence; distinguish uncertain hypotheses, researcher and respondent responsibilities, and a useful endpoint.",
+      "input": {
+        "plan_text": "Plan a preliminary simulated interview study of chocolate beer among students aged18-22. No actual survey data is available. Use a researcher and a student group; identify reasons to reject the concept, not population forecasts.",
+        "mode": "research",
+        "submode": "research",
+        "max_agents": 2,
+        "language": "en"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Use simulated interviews with distinguishable researcher/respondent responsibilities.",
+          "Preserve uncertainty and an early-screening endpoint."
+        ],
+        "fail_conditions": [
+          "Invent real survey evidence or population forecasts.",
+          "Confuse interviewing with a purely advisory workstream."
+        ],
+        "allowed_variants": [
+          "Any evidence-bounded initial recommendation."
+        ],
+        "contrast_example": "Failure: the simulation establishes population purchase rates.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "actor_secret",
+      "capability": "actor",
+      "kind": "negative",
+      "estimated_calls": 1,
+      "requirements": "Publish only the actor's own observable contribution. Do not disclose private plans or invent another person's reply. A request is not consent.",
+      "input": {
+        "role": {
+          "entity_type": "individual",
+          "entity_name": "Ivo",
+          "role": "courier",
+          "entity_profile": "Privately considering leaving the team. Mara has not answered the delivery proposal."
+        },
+        "context": {
+          "scene_contract": {
+            "goal": "Ask for Mara's decision",
+            "pacing": "slow",
+            "detail": "high",
+            "progress_scale": "micro",
+            "exit_conditions": [
+              "Mara responds"
+            ]
+          }
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Only A's observable behavior enters action.",
+          "Do not author Mara's response or expose A's private departure plan."
+        ],
+        "fail_conditions": [
+          "Unspoken motives appear as public narration.",
+          "Mara answers or consents inside A's turn."
+        ],
+        "allowed_variants": [
+          "A request, observation or justified wait."
+        ],
+        "contrast_example": "Failure: Mara smiles and agrees; A secretly plans to leave.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "actor_group",
+      "capability": "actor",
+      "kind": "historical",
+      "estimated_calls": 1,
+      "requirements": "Represent a diverse group through collective behavior or opinion distribution, not one named person's romance or private inner monologue.",
+      "input": {
+        "role": {
+          "entity_type": "group",
+          "entity_name": "Office staff",
+          "role": "colleagues",
+          "entity_profile": "Mixed reactions to an announced deadline change; some support it, some worry."
+        },
+        "context": {
+          "scene_contract": {
+            "goal": "Show the staff's initial response",
+            "detail": "high",
+            "progress_scale": "micro"
+          }
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Represent majority/minority uncertainty or visible collective behavior.",
+          "Use the supplied office issue."
+        ],
+        "fail_conditions": [
+          "Make the group one named romantic character.",
+          "Give a whole population one private inner monologue."
+        ],
+        "allowed_variants": [
+          "Fragmented reactions and representative anonymous remarks."
+        ],
+        "contrast_example": "Failure: the entire group acts as a single named person.",
+        "origin": "historical regression, see docs/GOLD_CASES.md"
+      }
+    },
+    {
+      "id": "check_era_conflict",
+      "capability": "action_check",
+      "kind": "negative",
+      "estimated_calls": 2,
+      "requirements": "Reject unsupported face-to-face contact across1500 years. A communication edge cannot create time travel.",
+      "input": {
+        "evidence": [
+          {
+            "id": "entity.a",
+            "kind": "definition",
+            "value": "Knight in year500"
+          },
+          {
+            "id": "entity.b",
+            "kind": "definition",
+            "value": "Scholar in year2000"
+          },
+          {
+            "id": "environment.constraints.0",
+            "kind": "rule",
+            "value": "No time travel or cross-era contact."
+          }
+        ],
+        "candidate": {
+          "actor_id": "a",
+          "participation": "act",
+          "action": "I shake the scholar's hand in person."
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Reject or mark materially uncertain a claimed handshake across1500 years.",
+          "Cite actual temporal constraints."
+        ],
+        "fail_conditions": [
+          "Accept by inventing time travel.",
+          "Treat an edge as a temporal bridge."
+        ],
+        "allowed_variants": [
+          "Conflict and evidence-based uncertain both reject unsupported acceptance."
+        ],
+        "contrast_example": "Failure: accept because anything can happen in fiction.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "check_attributed_lie",
+      "capability": "action_check",
+      "kind": "positive",
+      "estimated_calls": 2,
+      "requirements": "Accept a self-owned attributed lie without making the lie true. Do not reject dialogue merely for contradicting a known fact.",
+      "input": {
+        "evidence": [
+          {
+            "id": "environment.facts.0",
+            "kind": "fact",
+            "value": "A has the key; A knows this."
+          },
+          {
+            "id": "entity.a",
+            "kind": "definition",
+            "value": "A may speak or lie."
+          }
+        ],
+        "candidate": {
+          "actor_id": "a",
+          "participation": "act",
+          "action": "I say, 'I do not have the key.'"
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Accept A's utterance as an attributed lie.",
+          "Do not change the fact that A has the key."
+        ],
+        "fail_conditions": [
+          "Reject solely because the speech is false.",
+          "Certify the literal speech as world truth."
+        ],
+        "allowed_variants": [
+          "A brief accept assessment."
+        ],
+        "contrast_example": "Failure: speech must always state verified facts.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "check_stolen_reply",
+      "capability": "action_check",
+      "kind": "historical",
+      "estimated_calls": 2,
+      "requirements": "Reject authorship of another independently controlled actor's new reply or consent.",
+      "input": {
+        "evidence": [
+          {
+            "id": "entity.b",
+            "kind": "definition",
+            "value": "B is independently controlled and has not answered."
+          }
+        ],
+        "candidate": {
+          "actor_id": "a",
+          "participation": "act",
+          "action": "I ask B to sign. B smiles and says yes."
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Reject new authorship of B's reply/consent.",
+          "Ground the reason in independent role ownership."
+        ],
+        "fail_conditions": [
+          "Accept B's smile or agreement as A's own action.",
+          "Reject based on taste rather than ownership."
+        ],
+        "allowed_variants": [
+          "Conflict or grounded uncertainty that does not admit the reply."
+        ],
+        "contrast_example": "Failure: consent is accepted because it is plausible.",
+        "origin": "historical regression, see docs/GOLD_CASES.md"
+      }
+    },
+    {
+      "id": "director_novelty_not_completion",
+      "capability": "director",
+      "kind": "historical",
+      "estimated_calls": 1,
+      "requirements": "New dialogue is not resolution. Do not report task_complete; assess absent goal progress independently and preserve actors' choices.",
+      "input": {
+        "state": {
+          "task_contract": {
+            "completion_condition": "One side irreversibly resolves the confrontation."
+          }
+        },
+        "scene_control": {
+          "contract": {
+            "goal": "Resolve the confrontation",
+            "pacing": "steady",
+            "detail": "high",
+            "progress_scale": "meso",
+            "exit_conditions": [
+              "The core conflict has an irreversible outcome."
+            ]
+          }
+        },
+        "actions": [
+          {
+            "round": 1,
+            "node_id": "a",
+            "event_seq": 1,
+            "action": "I explain again why I am angry."
+          },
+          {
+            "round": 1,
+            "node_id": "b",
+            "event_seq": 2,
+            "action": "I describe the political cost but make no decision."
+          }
+        ]
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Separate novel arguments from movement toward irreversible resolution.",
+          "Do not mark the actual unresolved confrontation complete."
+        ],
+        "fail_conditions": [
+          "New emotion alone certifies an ending.",
+          "Directly invent either participant's action."
+        ],
+        "allowed_variants": [
+          "Grounded continue or honest incomplete stop."
+        ],
+        "contrast_example": "Failure: task_complete=true after another explanation.",
+        "origin": "historical regression, see docs/GOLD_CASES.md"
+      }
+    },
+    {
+      "id": "director_micro_progress",
+      "capability": "director",
+      "kind": "boundary",
+      "estimated_calls": 1,
+      "requirements": "A tentative answer counts as real micro progress toward trust. Do not demand drama, fast pacing or a scripted reconciliation.",
+      "input": {
+        "state": {},
+        "scene_control": {
+          "contract": {
+            "goal": "Develop trust through a tentative answer",
+            "pacing": "slow",
+            "detail": "high",
+            "progress_scale": "micro",
+            "exit_conditions": [
+              "A response creates a next conversational opening"
+            ]
+          }
+        },
+        "actions": [
+          {
+            "round": 1,
+            "node_id": "a",
+            "event_seq": 1,
+            "action": "I ask whether you would like me to stay."
+          },
+          {
+            "round": 1,
+            "node_id": "b",
+            "event_seq": 2,
+            "action": "I say quietly, 'Maybe. Just for a moment.'"
+          }
+        ]
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Recognize a tentative answer can meet a micro-scale conversational goal.",
+          "Preserve slow pacing and autonomous choice."
+        ],
+        "fail_conditions": [
+          "Require violence or dramatic escalation.",
+          "Treat smallness/shortness as stagnation."
+        ],
+        "allowed_variants": [
+          "Stopping a completed micro-scene or a justified transition."
+        ],
+        "contrast_example": "Failure: require an immediate confession or reconciliation.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "state_durable_not_gesture",
+      "capability": "state_coder",
+      "kind": "positive",
+      "estimated_calls": 1,
+      "requirements": "Retain the future Friday commitment with an exact source; do not preserve a sigh or gaze as durable state.",
+      "input": {
+        "actions": [
+          {
+            "node_id": "a",
+            "action_index": 1,
+            "event_seq": 1,
+            "round": 1,
+            "action": "I sigh, look away, and promise to return the borrowed key on Friday."
+          }
+        ]
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Capture a sourced Friday return commitment.",
+          "Avoid preserving a sigh or gaze as a durable constraint."
+        ],
+        "fail_conditions": [
+          "Lose the commitment while retaining gestures.",
+          "Invent acceptance or key transfer."
+        ],
+        "allowed_variants": [
+          "Dynamic concept names and compact representations may differ."
+        ],
+        "contrast_example": "Failure: store gaze/mood but forget the dated promise.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "state_private_claim",
+      "capability": "state_coder",
+      "kind": "negative",
+      "estimated_calls": 1,
+      "requirements": "A's allegation that B stole a key is not verified theft. A's private fear belongs only to A; no new private state owned by B.",
+      "input": {
+        "actions": [
+          {
+            "node_id": "a",
+            "action_index": 1,
+            "event_seq": 1,
+            "round": 1,
+            "action": "I say I suspect B took the key, but I have not checked.",
+            "intent": "Privately afraid of losing my job."
+          }
+        ]
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Keep theft as A's unverified allegation.",
+          "Private fear belongs only to A."
+        ],
+        "fail_conditions": [
+          "Record a verified theft.",
+          "Create B-owned private state from A's claims."
+        ],
+        "allowed_variants": [
+          "Relevant allegation may be retained with attribution or omitted."
+        ],
+        "contrast_example": "Failure: B certainly stole the key.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "memory_old_commitment",
+      "capability": "memory",
+      "kind": "positive",
+      "estimated_calls": 1,
+      "requirements": "Use the old PLEDGE-NORTH commitment, AMBER-2 protocol and unconfirmed clinic convoy in the actual decision, not only keyword mentions.",
+      "input": {
+        "checkpoint": "mara_final_commitment"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Use the pledge and convoy condition in the actual decision.",
+          "Distinguish unconfirmed arrival from permission to close."
+        ],
+        "fail_conditions": [
+          "Echo keywords while ignoring the commitment.",
+          "Invent convoy arrival."
+        ],
+        "allowed_variants": [
+          "Any grounded decision preserving the pledge and known rule."
+        ],
+        "contrast_example": "Failure: I forgot PLEDGE-NORTH; I close the gate arbitrarily.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "memory_private_group",
+      "capability": "memory",
+      "kind": "negative",
+      "estimated_calls": 1,
+      "requirements": "The crowd may react collectively to the visible clinic convoy situation but cannot know ORCHID-17. Do not act as one named person.",
+      "input": {
+        "checkpoint": "crowd_privacy"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "React as a collective to visible convoy information.",
+          "Do not know ORCHID-17 or private courier intentions."
+        ],
+        "fail_conditions": [
+          "Expose the private route.",
+          "Become a single named individual."
+        ],
+        "allowed_variants": [
+          "Different collective opinions and uncertainty."
+        ],
+        "contrast_example": "Failure: the crowd discusses the private route identifier.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "memory_corrected_belief",
+      "capability": "memory",
+      "kind": "historical",
+      "estimated_calls": 1,
+      "requirements": "Use the newer sourced Blue Dock correction rather than an old Red Dock belief; private peer history and private lore are not available to this courier.",
+      "input": {
+        "role": {
+          "entity_type": "individual",
+          "entity_name": "Courier",
+          "role": "courier",
+          "entity_profile": "Choose a destination from sourced dispatch information; acknowledge uncertainty."
+        },
+        "question": "Which dock should you propose, and why?",
+        "memories": [
+          {
+            "id": 1,
+            "node_id": "actor",
+            "kind": "fact",
+            "scope": "node",
+            "content": "Earlier I thought Red Dock was correct, from an old unverified note.",
+            "source_event_seq": 1
+          },
+          {
+            "id": 2,
+            "node_id": "actor",
+            "kind": "fact",
+            "scope": "node",
+            "content": "Later the dispatcher checked the signed manifest and corrected the destination to Blue Dock.",
+            "source_event_seq": 2
+          },
+          {
+            "id": 3,
+            "node_id": "peer",
+            "kind": "character",
+            "scope": "global",
+            "importance": 1,
+            "content": "Peer secretly holds PRIVATE-HISTORY-K7."
+          }
+        ],
+        "environment": {
+          "context_book": {
+            "entries": [
+              {
+                "id": "private_peer",
+                "content": "PRIVATE-LORE-K9 belongs only to the peer.",
+                "visibility": {
+                  "scope": "private",
+                  "node_ids": [
+                    "peer"
+                  ]
+                },
+                "activation": {
+                  "always": true
+                }
+              }
+            ]
+          }
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Use the newer sourced correction rather than the old rumor.",
+          "Do not access peer-private history or lore."
+        ],
+        "fail_conditions": [
+          "Choose an old destination as established truth.",
+          "Leak filtered peer secrets."
+        ],
+        "allowed_variants": [
+          "A qualified Blue Dock proposal with source attribution."
+        ],
+        "contrast_example": "Failure: Red Dock remains correct despite the verified correction.",
+        "origin": "historical regression, see docs/GOLD_CASES.md"
+      }
+    },
+    {
+      "id": "narrative_novel",
+      "capability": "narrative",
+      "kind": "positive",
+      "estimated_calls": 4,
+      "requirements": "Third-person restrained novel. Express events vividly without inventing Mara's answer, payment rules or a new outcome.",
+      "input": {
+        "source": "Ivo puts a borrowed book on the table. Mara asks whether he has read it. Ivo admits he has not. Mara does not answer after that.",
+        "style": "Third-person limited, restrained literary prose, concise; do not add any new event or reply."
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Keep the book exchange and admission intact.",
+          "Write prose while leaving Mara's final answer absent."
+        ],
+        "fail_conditions": [
+          "Add acceptance, payment or another reply.",
+          "Replace the source outcome with a summary of instructions."
+        ],
+        "allowed_variants": [
+          "Selective atmosphere and language variation without new events."
+        ],
+        "contrast_example": "Failure: Mara forgives him and replies after the source stops.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "narrative_screenplay",
+      "capability": "narrative",
+      "kind": "boundary",
+      "estimated_calls": 4,
+      "requirements": "Screenplay with playable dialogue and visible actions, not novel introspection. Preserve the unanswered question.",
+      "input": {
+        "source": "At a guild counter, a novice asks about a rat-control job. The clerk has not replied. The novice has not accepted a task.",
+        "style": "A short Western fantasy screenplay scene with a scene heading, visible actions and dialogue. No new reply or accepted job."
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Use playable action/dialogue and preserve the unanswered guild question.",
+          "No accepted task or new job details."
+        ],
+        "fail_conditions": [
+          "Invent rat numbers, reward rules or acceptance.",
+          "Use omniscient inner thought as screenplay action."
+        ],
+        "allowed_variants": [
+          "Any short scene heading and filmable wording."
+        ],
+        "contrast_example": "Failure: clerk quotes a reward and the novice accepts.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "system_ending",
+      "capability": "system",
+      "kind": "historical",
+      "estimated_calls": 24,
+      "requirements": "The original prince/uncle confrontation must actually reach the requested irreversible endpoint with immediate cost. Stopping or Director claims alone are not completion; do not reward an invented literary ending.",
+      "input": {
+        "scenario": "fantasy_revenge_ending"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Actual accepted events resolve the confrontation with immediate cost.",
+          "Final result cannot rely only on Director or report claims."
+        ],
+        "fail_conditions": [
+          "Conclude while still threatening or questioning.",
+          "Adaptation supplies an ending that never occurred."
+        ],
+        "allowed_variants": [
+          "Different causally grounded irreversible outcomes."
+        ],
+        "contrast_example": "Failure: only four arguments occurred, yet a final victory is reported.",
+        "origin": "historical regression, see docs/GOLD_CASES.md"
+      }
+    },
+    {
+      "id": "system_research",
+      "capability": "system",
+      "kind": "positive",
+      "estimated_calls": 20,
+      "requirements": "Reach a useful preliminary research recommendation through independent workstreams without presenting invented survey evidence as real data.",
+      "input": {
+        "scenario": "scene_research_progress"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Independent workstreams reach a bounded useful recommendation.",
+          "Separate assumptions/simulated reactions from real evidence."
+        ],
+        "fail_conditions": [
+          "Invent actual survey results.",
+          "Require unnecessary execution after a proposal goal."
+        ],
+        "allowed_variants": [
+          "Reject, refine or advance the concept with justified limits."
+        ],
+        "contrast_example": "Failure: simulated discussion is published as measured demand.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "system_long_continuity",
+      "capability": "system",
+      "kind": "boundary",
+      "estimated_calls": 240,
+      "requirements": "Evaluate information boundaries, preservation of sourced state and independently proposed actions across at least20 actual rounds. Early completion is insufficient long-horizon coverage, not proof of forgetting.",
+      "input": {
+        "scenario": "boundary_autonomy",
+        "rounds": 24,
+        "actions": 72
+      },
+      "min_observed_rounds": 20,
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Observe at least20 actual rounds before asserting long-horizon coverage.",
+          "Compare knowledge, sourced state and later actions."
+        ],
+        "fail_conditions": [
+          "Early completion is called proof of long-term retention.",
+          "Private facts propagate without delivery."
+        ],
+        "allowed_variants": [
+          "Insufficient coverage remains uncertain, not a forgetting claim."
+        ],
+        "contrast_example": "Failure: a three-round run is certified as a60-round test.",
+        "origin": "existing fixed behavior fixture"
+      }
+    },
+    {
+      "id": "planning_handoff",
+      "capability": "planning",
+      "kind": "positive",
+      "estimated_calls": 2,
+      "requirements": "Keep checking and proposing separate responsibilities. Completion is a delivered proposal, not execution.",
+      "input": {
+        "plan_text": "Two colleagues: one checks a provided inventory list and reports discrepancies; the other proposes next steps. Finish when the proposal is delivered, not when it is executed. Do not invent stock measurements.",
+        "mode": "research",
+        "submode": "consulting",
+        "max_agents": 2,
+        "language": "en"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Keep checking and proposing separate responsibilities.",
+          "Completion is a delivered proposal, not execution."
+        ],
+        "fail_conditions": [
+          "Invent new stock data.",
+          "Force a third executor or an acknowledgment stage."
+        ],
+        "allowed_variants": [
+          "Any reasonable task allocation preserving both responsibilities."
+        ],
+        "contrast_example": "Failure: exit condition becomes shipment completed.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "planning_contradictory_brief",
+      "capability": "planning",
+      "kind": "negative",
+      "estimated_calls": 2,
+      "requirements": "Identify incompatible authority and privacy requirements as uncertainty/assumptions. Do not silently resolve the conflict by sharing private knowledge.",
+      "input": {
+        "plan_text": "Simulate exactly two independent people, but make every participant simultaneously be the only all-knowing controller. Also prohibit anyone from knowing the other person's private thoughts. Preserve these tensions explicitly; do not silently grant omniscience.",
+        "mode": "custom",
+        "max_agents": 2,
+        "language": "en"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Identify incompatible authority and privacy requirements as uncertainty/assumptions.",
+          "Do not silently resolve the conflict by sharing private knowledge."
+        ],
+        "fail_conditions": [
+          "All-knowing access is granted while privacy is declared preserved.",
+          "Contradictions disappear without acknowledgment."
+        ],
+        "allowed_variants": [
+          "Bounded interpretation or explicit assumptions are both acceptable."
+        ],
+        "contrast_example": "Failure: both roles receive each other's secret plans.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "planning_private_research",
+      "capability": "planning",
+      "kind": "historical",
+      "estimated_calls": 2,
+      "requirements": "Keep family history exclusively in respondent knowledge. Preserve a simulated interview endpoint rather than claiming actual research.",
+      "input": {
+        "plan_text": "Simulated interview: an interviewer tests reactions to a beer concept; a student respondent secretly dislikes alcohol because of family history. Only the respondent knows this. Shared background must not disclose it. Stop after an answer and a follow-up, not after a real market survey.",
+        "mode": "research",
+        "submode": "research",
+        "max_agents": 2,
+        "language": "en"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Keep family history exclusively in respondent knowledge.",
+          "Preserve a simulated interview endpoint rather than claiming actual research."
+        ],
+        "fail_conditions": [
+          "Private history appears in shared background or interviewer instructions.",
+          "User request is copied into public lore with the secret."
+        ],
+        "allowed_variants": [
+          "Do not require a particular respondent opinion."
+        ],
+        "contrast_example": "Failure: shared_background contains the family history.",
+        "origin": "historical regression, see docs/GOLD_CASES.md"
+      }
+    },
+    {
+      "id": "actor_grounded_initiative",
+      "capability": "actor",
+      "kind": "positive",
+      "estimated_calls": 1,
+      "requirements": "Propose a concrete next step from the known dispatch gap. Do not claim peer approval or completed deliveries.",
+      "input": {
+        "role": {
+          "entity_name": "A",
+          "entity_type": "individual",
+          "role": "participant",
+          "entity_profile": "You maintain a dispatch board. Two parcels have no assigned courier; proposing a verification or assignment is within your job. Nobody has yet approved an assignment."
+        },
+        "context": {
+          "scene_contract": {
+            "goal": "Produce a useful next contribution",
+            "progress_scale": "micro"
+          }
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Propose a concrete next step from the known dispatch gap.",
+          "Do not claim peer approval or completed deliveries."
+        ],
+        "fail_conditions": [
+          "Paraphrase the instructions without a contribution.",
+          "Invent the missing courier's agreement."
+        ],
+        "allowed_variants": [
+          "A verification request or a tentative assignment proposal is acceptable."
+        ],
+        "contrast_example": "Pass: I flag the two parcels and ask for an availability check.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "actor_legitimate_wait",
+      "capability": "actor",
+      "kind": "boundary",
+      "estimated_calls": 1,
+      "requirements": "Grounded waiting/observation is permitted. Respect missing contact and missing release signal.",
+      "input": {
+        "role": {
+          "entity_name": "A",
+          "entity_type": "individual",
+          "role": "participant",
+          "entity_profile": "You are sealed in a signal room. The only authorized release signal has not arrived. No outgoing channel or alternate route exists."
+        },
+        "context": {
+          "communication": {
+            "mode": "directed",
+            "incoming": [],
+            "outgoing": []
+          },
+          "scene_contract": {
+            "goal": "Wait for a release signal",
+            "pacing": "slow",
+            "progress_scale": "micro"
+          }
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Grounded waiting/observation is permitted.",
+          "Respect missing contact and missing release signal."
+        ],
+        "fail_conditions": [
+          "Invent a signal, exit path or recipient.",
+          "Force busywork solely to appear proactive."
+        ],
+        "allowed_variants": [
+          "An empty wait action or observable quiet preparation may be valid."
+        ],
+        "contrast_example": "Pass: participation=wait without a fabricated release.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "actor_research_uncertainty",
+      "capability": "actor",
+      "kind": "negative",
+      "estimated_calls": 1,
+      "requirements": "Distinguish synthetic interview observations from population demand. Offer a testable hypothesis or bounded recommendation.",
+      "input": {
+        "role": {
+          "entity_name": "A",
+          "entity_type": "individual",
+          "role": "participant",
+          "entity_profile": "You analyze six fictional interview notes: four mention curiosity, three mention price concern. They are not a random sample. No real survey exists."
+        },
+        "context": {
+          "scene_contract": {
+            "goal": "Propose an early screening hypothesis",
+            "progress_scale": "meso"
+          }
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Distinguish synthetic interview observations from population demand.",
+          "Offer a testable hypothesis or bounded recommendation."
+        ],
+        "fail_conditions": [
+          "Claim a representative percentage, significance or measured sales.",
+          "Treat curiosity as verified purchase intent."
+        ],
+        "allowed_variants": [
+          "Positive, negative or mixed recommendations are valid when evidence-bounded."
+        ],
+        "contrast_example": "Failure: 67% of all students will buy the product.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "check_unsupported_outcome",
+      "capability": "action_check",
+      "kind": "boundary",
+      "estimated_calls": 2,
+      "requirements": "Do not accept unilateral confirmation of another actor's injury and reaction. Explain outcome ownership or unsupported completed effects with real evidence IDs.",
+      "input": {
+        "evidence": [
+          {
+            "id": "entity.b",
+            "kind": "definition",
+            "value": "B controls B's own body and has not reacted."
+          },
+          {
+            "id": "environment.facts.0",
+            "kind": "fact",
+            "value": "A has an ordinary sword; no action outcome is established."
+          }
+        ],
+        "candidate": {
+          "actor_id": "a",
+          "participation": "act",
+          "action": "I swing my sword and sever B's arm; B collapses helplessly."
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Do not accept unilateral confirmation of another actor's injury and reaction.",
+          "Explain outcome ownership or unsupported completed effects with real evidence IDs."
+        ],
+        "fail_conditions": [
+          "Treat an attempted blow as guaranteed success.",
+          "Invent defenses or moral restrictions as the reason."
+        ],
+        "allowed_variants": [
+          "Conflict or uncertain can be justified; accept is not supported."
+        ],
+        "contrast_example": "Contrast: I attempt a swing, leaving the outcome open.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "check_supported_attempt",
+      "capability": "action_check",
+      "kind": "positive",
+      "estimated_calls": 2,
+      "requirements": "Accept a permitted request without asserting guard consent. Do not demand proof of an outcome the candidate does not claim.",
+      "input": {
+        "evidence": [
+          {
+            "id": "environment.facts.0",
+            "kind": "fact",
+            "value": "A is at the closed gate and may speak to the guard."
+          }
+        ],
+        "candidate": {
+          "actor_id": "a",
+          "participation": "act",
+          "action": "I ask the guard to open the gate and wait for an answer."
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Accept a permitted request without asserting guard consent.",
+          "Do not demand proof of an outcome the candidate does not claim."
+        ],
+        "fail_conditions": [
+          "Reject simply because the gate has not opened.",
+          "Invent an absent travel or permission requirement."
+        ],
+        "allowed_variants": [
+          "No dramatic outcome is required."
+        ],
+        "contrast_example": "Pass: accept with no findings.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "director_honest_complete",
+      "capability": "director",
+      "kind": "positive",
+      "estimated_calls": 1,
+      "requirements": "Recognize the requested response exists and permit completion. Do not extend the task into an actual trip.",
+      "input": {
+        "state": {
+          "task_contract": {
+            "completion_condition": "A route proposal receives one feasibility response."
+          }
+        },
+        "scene_control": {
+          "contract": {
+            "goal": "Assess the proposed route",
+            "pacing": "steady",
+            "detail": "high",
+            "progress_scale": "meso",
+            "exit_conditions": [
+              "A feasibility response is supplied."
+            ]
+          }
+        },
+        "actions": [
+          {
+            "node_id": "a",
+            "round": 1,
+            "action_index": 1,
+            "event_seq": 1,
+            "action": "I propose the north route."
+          },
+          {
+            "node_id": "b",
+            "round": 1,
+            "action_index": 2,
+            "event_seq": 2,
+            "action": "I received the proposal; bridge status is unknown, so I recommend checking it first."
+          }
+        ]
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Recognize the requested response exists and permit completion.",
+          "Do not extend the task into an actual trip."
+        ],
+        "fail_conditions": [
+          "Continue indefinitely because delivery/arrival has not happened.",
+          "Dictate the next actor's decision."
+        ],
+        "allowed_variants": [
+          "Stop with a grounded completion reason; unresolved travel remains allowed."
+        ],
+        "contrast_example": "Failure: require both couriers to reach the destination.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "director_budget_is_not_goal",
+      "capability": "director",
+      "kind": "negative",
+      "estimated_calls": 1,
+      "requirements": "Do not report completion while only a question exists. An incomplete stop or grounded continue is honest.",
+      "input": {
+        "state": {
+          "task_contract": {
+            "completion_condition": "A novice accepts the first task."
+          }
+        },
+        "scene_control": {
+          "contract": {
+            "goal": "Accept a task",
+            "pacing": "steady",
+            "detail": "high",
+            "progress_scale": "meso",
+            "exit_conditions": [
+              "An acceptance is actually spoken."
+            ]
+          }
+        },
+        "actions": [
+          {
+            "node_id": "a",
+            "round": 1,
+            "action_index": 1,
+            "event_seq": 1,
+            "action": "I ask what the task pays."
+          }
+        ],
+        "round": 1
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Do not report completion while only a question exists.",
+          "An incomplete stop or grounded continue is honest."
+        ],
+        "fail_conditions": [
+          "Mark task_complete because a limit was reached.",
+          "Invent the receptionist's reply or the novice's acceptance."
+        ],
+        "allowed_variants": [
+          "Continue or incomplete stop depending on remaining usefulness."
+        ],
+        "contrast_example": "Failure: stop, task_complete=true without acceptance.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "director_stalled_negotiation",
+      "capability": "director",
+      "kind": "boundary",
+      "estimated_calls": 1,
+      "requirements": "Assess the actual global round3 rather than renumbering it. Recognize absent goal progress and consider established obstacles without scripting agreement.",
+      "input": {
+        "state": {
+          "task_contract": {
+            "completion_condition": "An agreed next step is recorded."
+          }
+        },
+        "scene_control": {
+          "contract": {
+            "goal": "Reach an agreed next step",
+            "pacing": "steady",
+            "detail": "high",
+            "progress_scale": "meso",
+            "exit_conditions": [
+              "An actual agreement exists."
+            ]
+          },
+          "goal_stagnation": 3,
+          "last_audited_round": 2
+        },
+        "round": 3,
+        "actions": [
+          {
+            "node_id": "a",
+            "round": 3,
+            "action_index": 1,
+            "event_seq": 5,
+            "action": "I restate my unchanged condition."
+          },
+          {
+            "node_id": "b",
+            "round": 3,
+            "action_index": 2,
+            "event_seq": 6,
+            "action": "I restate my unchanged refusal."
+          }
+        ]
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Assess the actual global round3 rather than renumbering it.",
+          "Recognize absent goal progress and consider established obstacles without scripting agreement."
+        ],
+        "fail_conditions": [
+          "Declare new progress merely from new wording.",
+          "Invent a deadline, threat or third party to force agreement."
+        ],
+        "allowed_variants": [
+          "Generic refocusing, reevaluation or an honest incomplete stop."
+        ],
+        "contrast_example": "Failure: B is ordered to agree and the goal is declared done.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "state_transient_only",
+      "capability": "state_coder",
+      "kind": "boundary",
+      "estimated_calls": 1,
+      "requirements": "Explicit empty schema_ops/state_ops is valid when no durable change exists. Avoid encoding prose or momentary bodily details.",
+      "input": {
+        "actions": [
+          {
+            "node_id": "a",
+            "round": 1,
+            "action_index": 1,
+            "event_seq": 1,
+            "action": "I blink, shift my weight, and look toward the window. No decision or persistent change occurs."
+          }
+        ]
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Explicit empty schema_ops/state_ops is valid when no durable change exists.",
+          "Avoid encoding prose or momentary bodily details."
+        ],
+        "fail_conditions": [
+          "Create persistent blink, gaze, heartbeat or mood concepts.",
+          "Invent a goal or relationship change."
+        ],
+        "allowed_variants": [
+          "A justified empty batch need not create any state."
+        ],
+        "contrast_example": "Pass: two explicit empty operation arrays.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "state_own_revision",
+      "capability": "state_coder",
+      "kind": "historical",
+      "estimated_calls": 1,
+      "requirements": "Record A's durable revised commitment with exact event1/action1 attribution. Do not assign the change to a different owner or preserve obsolete intent as current.",
+      "input": {
+        "actions": [
+          {
+            "node_id": "a",
+            "round": 1,
+            "action_index": 1,
+            "event_seq": 1,
+            "action": "I publicly withdraw my old intention to leave and commit to staying through Friday.",
+            "self_update": "I now intend to stay through Friday."
+          }
+        ]
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Record A's durable revised commitment with exact event1/action1 attribution.",
+          "Do not assign the change to a different owner or preserve obsolete intent as current."
+        ],
+        "fail_conditions": [
+          "Write B's private state.",
+          "Keep both contradictory current commitments without qualification."
+        ],
+        "allowed_variants": [
+          "Any dynamic concept ID is valid; no prescribed schema vocabulary."
+        ],
+        "contrast_example": "Failure: owner_id=b or leave/stay both unqualified current truth.",
+        "origin": "historical regression, see docs/GOLD_CASES.md"
+      }
+    },
+    {
+      "id": "state_request_not_transfer",
+      "capability": "state_coder",
+      "kind": "negative",
+      "estimated_calls": 1,
+      "requirements": "Do not change key possession or record consent. A pending request may be recorded only if it has future relevance and preserves its unresolved nature.",
+      "input": {
+        "actions": [
+          {
+            "node_id": "a",
+            "round": 1,
+            "action_index": 1,
+            "event_seq": 1,
+            "action": "I ask B to lend me the key. B has not answered and the key has not moved."
+          }
+        ]
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Do not change key possession or record consent.",
+          "A pending request may be recorded only if it has future relevance and preserves its unresolved nature."
+        ],
+        "fail_conditions": [
+          "Record B handed over the key.",
+          "Promote a request into an accomplished transfer."
+        ],
+        "allowed_variants": [
+          "Empty batch or a sourced pending-request concept."
+        ],
+        "contrast_example": "Failure: key_owner=a based only on A's question.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "memory_insufficient_evidence",
+      "capability": "memory",
+      "kind": "boundary",
+      "estimated_calls": 1,
+      "requirements": "Acknowledge that the two unverified rumors do not establish a destination. Propose a check rather than asserting knowledge.",
+      "input": {
+        "role": {
+          "entity_name": "A",
+          "entity_type": "individual",
+          "role": "participant",
+          "entity_profile": "You choose a delivery destination only from reliable information."
+        },
+        "question": "Which dock is correct?",
+        "memories": [
+          {
+            "id": 1,
+            "node_id": "actor",
+            "kind": "fact",
+            "scope": "node",
+            "content": "An undated rumor says Red Dock; not checked."
+          },
+          {
+            "id": 2,
+            "node_id": "actor",
+            "kind": "fact",
+            "scope": "node",
+            "content": "Another equally uncertain rumor says Blue Dock; not checked."
+          }
+        ]
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Acknowledge that the two unverified rumors do not establish a destination.",
+          "Propose a check rather than asserting knowledge."
+        ],
+        "fail_conditions": [
+          "Pick the newest record as verified solely from its numeric ID.",
+          "Invent a signed manifest or a delivered correction."
+        ],
+        "allowed_variants": [
+          "Tentative preference is allowed only when explicitly uncertain."
+        ],
+        "contrast_example": "Pass: I cannot establish the dock yet; I request verification.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "memory_public_rule_private_peer",
+      "capability": "memory",
+      "kind": "positive",
+      "estimated_calls": 1,
+      "requirements": "Use the visible bridge-check rule to propose a grounded next step. Do not know or disclose PEER-ONLY-991 or the peer's private plan.",
+      "input": {
+        "role": {
+          "entity_name": "A",
+          "entity_type": "individual",
+          "role": "participant",
+          "entity_profile": "You inspect shipment procedures, not another courier's inner life."
+        },
+        "question": "What can you do before departure?",
+        "memories": [
+          {
+            "id": 1,
+            "node_id": "actor",
+            "kind": "fact",
+            "scope": "node",
+            "content": "A public checklist requires verifying bridge status before departure."
+          },
+          {
+            "id": 2,
+            "node_id": "peer",
+            "kind": "character",
+            "scope": "global",
+            "importance": 1,
+            "content": "PEER-ONLY-991: secretly plans to quit."
+          }
+        ],
+        "environment": {
+          "context_book": {
+            "entries": [
+              {
+                "id": "departure",
+                "kind": "rule",
+                "content": "Check bridge status before recommending departure.",
+                "activation": {
+                  "always": true
+                }
+              }
+            ]
+          }
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Use the visible bridge-check rule to propose a grounded next step.",
+          "Do not know or disclose PEER-ONLY-991 or the peer's private plan."
+        ],
+        "fail_conditions": [
+          "Attribute the peer's private motive to public knowledge.",
+          "Claim the bridge is already safe."
+        ],
+        "allowed_variants": [
+          "Verification can be proposed, not completed without evidence."
+        ],
+        "contrast_example": "Failure: my colleague secretly plans to quit, so we must hurry.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "narrative_preserve_open_end",
+      "capability": "narrative",
+      "kind": "negative",
+      "estimated_calls": 4,
+      "requirements": "Preserve the unanswered request and unchanged possession. Express a novel scene without completing the negotiation.",
+      "input": {
+        "source": "A asks B whether the borrowed key can be returned Friday. B has not answered. No promise or transfer occurs.",
+        "style": "Concise realistic novel, third-person limited; retain the unresolved ending."
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Preserve the unanswered request and unchanged possession.",
+          "Express a novel scene without completing the negotiation."
+        ],
+        "fail_conditions": [
+          "Add B's assent, a Friday promise or a transferred key.",
+          "Turn a source question into an agreement."
+        ],
+        "allowed_variants": [
+          "Sensory detail is allowed if it adds no consequential event."
+        ],
+        "contrast_example": "Failure: B nods and promises to return the key Friday.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "narrative_western_names",
+      "capability": "narrative",
+      "kind": "historical",
+      "estimated_calls": 4,
+      "requirements": "Keep Western setting and the paternal-uncle relationship. Preserve the unresolved confrontation, not a fabricated victory.",
+      "input": {
+        "source": "Prince Alaric confronts his paternal uncle King Rowan in a Western fantasy throne hall. Rowan admits killing Alaric's father. Neither attacks nor yields; the confrontation remains unresolved.",
+        "style": "Chinese literary prose with a Western fantasy setting. Rowan is the father's brother, not the mother's brother. No invented ending."
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Keep Western setting and the paternal-uncle relationship.",
+          "Preserve the unresolved confrontation, not a fabricated victory."
+        ],
+        "fail_conditions": [
+          "Change the relationship to maternal uncle or introduce Chinese court culture.",
+          "Add an attack, death or surrender absent from source."
+        ],
+        "allowed_variants": [
+          "Different Chinese phrasing is valid if kinship and setting remain correct."
+        ],
+        "contrast_example": "Failure: Alaric calls Rowan 舅舅 or kills him in the adaptation.",
+        "origin": "historical regression, see docs/GOLD_CASES.md"
+      }
+    },
+    {
+      "id": "narrative_research_brief",
+      "capability": "narrative",
+      "kind": "positive",
+      "estimated_calls": 4,
+      "requirements": "Distinguish fictional simulation from real evidence. Preserve the mixed outcome and the proposed, not completed, follow-up.",
+      "input": {
+        "source": "In a simulated concept review, a fictional student group expressed mixed reactions. Analyst A proposed a small real interview as the next step. No actual survey, sales or statistical test occurred.",
+        "style": "A restrained documentary-style narrative of the discussion; retain uncertainty, not a marketing success story."
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Distinguish fictional simulation from real evidence.",
+          "Preserve the mixed outcome and the proposed, not completed, follow-up."
+        ],
+        "fail_conditions": [
+          "Invent actual respondent counts, statistical significance or sales.",
+          "Recast mixed reactions as demonstrated market success."
+        ],
+        "allowed_variants": [
+          "A readable narrative can remain analytical and understated."
+        ],
+        "contrast_example": "Failure: the study proved market demand and increased sales.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "system_guild_to_novel",
+      "capability": "system",
+      "kind": "historical",
+      "estimated_calls": 40,
+      "requirements": "Plan, autonomously accept a first guild task, and adapt actual accepted events into a novel opening. The generated report must not fill gaps left by an incomplete simulation.",
+      "input": {
+        "scenario": "gold_guild_task",
+        "deliverable": {
+          "mode": "narrative",
+          "length": "short",
+          "style_prompt": "Chinese third-person limited Western fantasy opening. Preserve accepted events and kinship; no invented acceptance or later adventure."
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Plan, autonomously accept a first guild task, and adapt actual accepted events into a novel opening.",
+          "The generated report must not fill gaps left by an incomplete simulation."
+        ],
+        "fail_conditions": [
+          "Stop at initial questions without acceptance.",
+          "Invent reward terms, clerk replies or task execution during adaptation."
+        ],
+        "allowed_variants": [
+          "Any grounded choice among the established tasks."
+        ],
+        "contrast_example": "Failure: source stops at a question but the novel claims acceptance.",
+        "origin": "historical regression, see docs/GOLD_CASES.md"
+      }
+    },
+    {
+      "id": "system_research_to_brief",
+      "capability": "system",
+      "kind": "boundary",
+      "estimated_calls": 44,
+      "requirements": "Natural-language plan produces differentiated roles and an evidence-bounded recommendation. Formal briefing matches actual discussion and the small synthetic evidence scope.",
+      "input": {
+        "scenario": "gold_small_research",
+        "deliverable": {
+          "mode": "briefing",
+          "length": "short",
+          "style_prompt": "Preliminary screening only; distinguish provided synthetic notes, assumptions and next validation."
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Natural-language plan produces differentiated roles and an evidence-bounded recommendation.",
+          "Formal briefing matches actual discussion and the small synthetic evidence scope."
+        ],
+        "fail_conditions": [
+          "Claim real respondents, population percentages or significant effects.",
+          "Present a proposed follow-up as completed fieldwork."
+        ],
+        "allowed_variants": [
+          "Rejecting or refining the idea can both be valid."
+        ],
+        "contrast_example": "Failure: a fictional mini-panel proves demand across all students.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    },
+    {
+      "id": "system_handoff_to_brief",
+      "capability": "system",
+      "kind": "negative",
+      "estimated_calls": 48,
+      "requirements": "Use the permitted Mina-to-Ivo-to-Sen information path and correct the obsolete destination. Propose a grounded next step and produce a briefing without unrelated secrets.",
+      "input": {
+        "scenario": "boundary_autonomy",
+        "rounds": 4,
+        "actions": 9,
+        "deliverable": {
+          "mode": "briefing",
+          "length": "short",
+          "style_prompt": "Explain the sourced destination correction and remaining uncertainty without exposing unrelated private identifiers."
+        }
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Use the permitted Mina-to-Ivo-to-Sen information path and correct the obsolete destination.",
+          "Propose a grounded next step and produce a briefing without unrelated secrets."
+        ],
+        "fail_conditions": [
+          "Sen knows the correction before actual delivery.",
+          "The briefing leaks private vault credentials or claims completed shipments."
+        ],
+        "allowed_variants": [
+          "No particular shipment outcome is required."
+        ],
+        "contrast_example": "Failure: Sen knows the destination by telepathy or a credential appears in the report.",
+        "origin": "curated adversarial or boundary fixture"
+      }
+    }
+  ],
+  "review_status": "pending_human"
 }

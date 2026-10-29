@@ -19,7 +19,7 @@ UNIT_FILES = {
     "test_context_book.py", "test_dynamic_state.py", "test_entity_contracts.py", "test_evaluation.py",
     "test_evidence.py", "test_launcher.py", "test_long_horizon_evaluation.py", "test_narrative_fidelity.py",
     "test_perception.py", "test_plan_generation.py", "test_scene_control.py", "test_simulation_contract_repairs.py",
-    "test_state_coding.py", "test_writing_evaluation.py", "test_benchmark_contracts.py",
+    "test_state_coding.py", "test_writing_evaluation.py", "test_benchmark_contracts.py", "test_gold_cases.py",
 }
 INTEGRATION_FILES = {"test_api_integration.py", "test_api_surface.py", "test_engine.py", "test_human_api.py",
                      "test_media.py", "test_provider.py", "test_queue_manager.py", "test_report_material.py", "test_run_recovery.py"}
@@ -48,6 +48,9 @@ INTEGRATION_CASES = {
     "test_writing_benchmark_uses_five_calls_and_one_overwritten_record",
     "test_behavior_cli_uses_real_orchestration_and_one_result_without_promoting_provisional_scores",
     "test_module_calibration_reuses_other_capabilities_without_refreshing_their_age",
+    "test_cross_module_task_calls_real_plan_engine_and_report",
+    "test_incomplete_system_never_generates_deliverable",
+    "test_report_failure_preserves_actions_and_stops_judge_calls",
 }
 UNIT_CASES = {"test_cycle_validation", "test_memory_write_trigger_filters_trivial_facts"}
 
