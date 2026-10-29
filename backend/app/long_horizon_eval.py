@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(f"Scenario: {scenario['title']}")
-    print(f"Timeline: {scenario['turns']} turns; sparse checkpoints: {len(checkpoints)}")
+    print(f"Scripted timeline: {scenario['turns']} turns; sparse checkpoints: {len(checkpoints)} (not autonomous engine rounds)")
     print(f"Real-call hard limit: {budget.max_calls}; token hard limit: {budget.max_total_tokens}")
     print(f"Estimated-cost hard limit: ${budget.max_cost_usd:.2f}")
     if not args.simulate and not args.execute:
@@ -63,10 +63,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"[ERROR] long-horizon evaluation failed: {exc}", file=sys.stderr)
         return 1
-    print(f"Mode: {artifact['evaluation']['mode']}; score: {artifact['evaluation']['score']}/100")
+    print(f"Mode: {artifact['evaluation']['mode']}; structural score: {artifact['evaluation']['score']}/100")
+    print(f"Semantic status: {artifact['evaluation']['semantic_status']}; use behavior_eval for independent semantic assessment.")
     print(f"JSON: {json_path}")
     print(f"Review: {markdown_path}")
-    return 0 if not artifact["evaluation"]["failures"] else 1
+    return 1 if artifact["evaluation"]["failures"] else 3 if args.execute else 0
 
 
 def _load_scenario() -> dict[str, Any]:

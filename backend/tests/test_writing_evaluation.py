@@ -70,13 +70,15 @@ def test_writing_benchmark_uses_five_calls_and_one_overwritten_record(monkeypatc
     import app.eval_runner as runner
     result_dir = Path("data") / f"writing-eval-test-{uuid.uuid4().hex}"
     monkeypatch.setattr(runner, "RESULTS_DIR", result_dir)
+    monkeypatch.setattr(runner, "build_judge_provider", Provider)
     scenario, _ = load_scenario("writing_styles")
     profiles = load_styles(scenario["styles"])
     try:
         for _ in range(2):
             inner = Provider()
             provider = BudgetedProvider(inner, EvalBudget(max_calls=5, max_total_tokens=12000, max_cost_usd=0.1))
-            artifact, path = asyncio.run(_execute_writing("writing_styles", scenario, provider, provider.budget, True, profiles))
+            judge = provider.with_provider(inner)  # Offline fake; production constructs a separate configured judge.
+            artifact, path = asyncio.run(_execute_writing("writing_styles", scenario, provider, provider.budget, True, profiles, judge_provider=judge))
             assert artifact["usage"]["calls"] == 5
             assert all(scenario["writing_source"] in prompt or
                        json.loads(prompt).get("source") == scenario["writing_source"] for prompt in inner.prompts)

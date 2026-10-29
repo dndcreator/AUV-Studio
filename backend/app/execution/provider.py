@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import ipaddress
 from typing import Any
 from urllib.parse import urlparse, urlsplit, urlunsplit
@@ -48,6 +49,11 @@ class OpenAICompatibleProvider:
         self.provider_kind = _normalize_configured_provider(provider_kind)
         self.max_output_tokens = max_output_tokens
         self.thinking_mode = thinking_mode if thinking_mode in {"enabled", "disabled"} else None
+
+    def with_output_limit(self, limit: int) -> OpenAICompatibleProvider:
+        scoped = copy.copy(self)
+        scoped.max_output_tokens = limit
+        return scoped
 
     def configure(
         self,

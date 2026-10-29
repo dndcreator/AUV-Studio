@@ -139,11 +139,11 @@ def test_director_plan_prompt_keeps_roleplay_entities_inside_the_world() -> None
             ),
         )
     )
-    assert "roles must be entities inside the simulated world" in provider.user_prompt
-    assert "only when the user explicitly asks for collaborative creation" in provider.user_prompt
-    assert "shared task contract" in provider.user_prompt
-    assert "identity contract" in provider.user_prompt
-    assert "not by literary functions" in provider.user_prompt
+    assert "in-world or professional participant" in provider.user_prompt
+    assert "unless explicitly requested" in provider.user_prompt
+    assert "completion_condition" in provider.user_prompt
+    assert "own interest or assignment" in provider.user_prompt
+    assert "plot device or omniscient narrator" in provider.user_prompt
 
 
 def test_autonomous_action_contract_is_rich_but_limited_to_self() -> None:

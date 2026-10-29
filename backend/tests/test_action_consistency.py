@@ -66,6 +66,8 @@ def test_checking_projection_pins_inactive_rules_and_other_entity_constraints_wi
     json.dumps({**ACCEPT, "decision": []}), json.dumps(verdict(category=[])),
     json.dumps({**ACCEPT, "findings": [{"category": "spacetime"}]}),
     json.dumps(verdict(refs=["fabricated.reference"])), json.dumps(verdict("personality")),
+    *[json.dumps({**ACCEPT, "scope": scope}) for scope in (None, {"self_owned": "true", "public_only": True},
+        {"self_owned": False, "public_only": True}, {"self_owned": True, "public_only": False})],
     json.dumps({**verdict(), "findings": []})])
 def test_malformed_or_ungrounded_assessments_never_accept(content):
     with pytest.raises(ActionConsistencyError):

@@ -346,7 +346,7 @@ def test_rollback_memory_view_excludes_future_source_run_memories() -> None:
     assert [item["content"] for item in filtered] == ["prior-run memory", "before checkpoint"]
 
 
-def test_invalid_state_coder_json_degrades_to_empty_patch() -> None:
+def test_invalid_state_coder_json_reports_parse_error_not_a_valid_empty_acknowledgment() -> None:
     assert parse_state_coder_output("not-json")["parse_error"] == "invalid_json"
 
 

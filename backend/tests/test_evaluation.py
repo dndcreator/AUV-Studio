@@ -248,10 +248,17 @@ def test_eval_executes_isolated_end_to_end_with_fake_provider(monkeypatch) -> No
         assert artifact["consistency"] == {"checked": 4, "not_accepted": []}
         assert artifact["diagnostics"]["usage_by_kind"]["action_check"]["calls"] == 4
         assert artifact["diagnostics"]["last_audits"][-1]["task_complete"] is True
+        context = artifact["diagnostics"]["action_check_context"]
+        assert context["measured_checks"] == context["check_records"] == 4
+        assert context["estimated_input_tokens"] > 0
+        assert context["provider_usage"]["prompt_tokens"] == 4 * 80
+        assert context["blocks"]["stable_evidence"]["estimated_tokens"] > 0
+        assert artifact["diagnostics"]["round_audits"][-1]["task_complete"] is True
         assert artifact["completion"]["status"] == "completed"
         assert result_path.name == "roleplay_basic.md"
         record = result_path.read_text(encoding="utf-8")
         assert "Simulation" in record
+        assert "Input estimate:" in record and "Goal audits:" in record
         assert "Full Log" not in record
         assert "provider_payload_marker" not in record
         assert list(result_dir.iterdir()) == [result_path]

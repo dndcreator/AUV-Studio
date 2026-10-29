@@ -7,7 +7,7 @@ from typing import Any
 from ..schemas import WorkflowDefinition, WorkflowEdge, WorkflowNode
 from .dynamic_state import compact_dynamic_state
 from .entity_contracts import entity_action_contract
-from .scene_control import scene_setup_instruction
+from .scene_control import scene_progress_feedback, scene_setup_instruction
 from .perception import delivery_receipts, public_action
 
 
@@ -123,6 +123,7 @@ def activation_instruction(
         '{"active_node_ids":["node_id"],"reason":"brief routing reason"}.\n\n'
         + (scene_setup_instruction() if not scene.get("contract") else "Preserve the established Scene Contract. ")
         + f"\nSCENE CONTRACT:\n{json.dumps(scene.get('contract', {}), ensure_ascii=False)}\n\n"
+        + f"GOAL FEEDBACK:\n{json.dumps(scene_progress_feedback(scene), ensure_ascii=False)}\n\n"
         + f"SHARED STATE:\n{json.dumps(build_shared_state_view(state, recent_actions), ensure_ascii=False, default=str)}\n\n"
         + "CONNECTIONS (directed delivery; no entity edges means a shared public scene; never grant private knowledge):\n"
         + json.dumps([edge.model_dump() for edge in connections or []], ensure_ascii=False) + "\n\n"
@@ -160,11 +161,13 @@ def build_context_packet(
     round_index: int,
     action_index: int,
     scene_contract: dict[str, Any] | None = None,
+    progress_feedback: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     return {
         "round": round_index,
         "action_index": action_index,
         "scene_contract": scene_contract or {},
+        "progress_feedback": progress_feedback or {},
         "state": state,
         "memory": memories,
         "recent_actions": recent_actions[-12:],
@@ -183,6 +186,8 @@ def action_instruction(context_packet: dict[str, Any], role_packet: dict[str, An
         "Respect their evidence_kind: a claim is attributable to its speaker; an observation may be mistaken; "
         "an inference remains an interpretation. Confidence alone does not turn any of these into confirmed facts. "
         "Follow the current Scene Contract for pacing, detail, and progress_scale independently. "
+        "Goal progress feedback is a scene-level request, not an instruction to fabricate novelty, override your "
+        "role or choose a particular outcome. Select your own grounded response, or wait when justified. "
         "Detail means selectively showing meaningful particulars, not a word quota or checklist: dialogue may include "
         "your exact words and behavior; analytical work may include your reasoning, evidence, uncertainty, and result. "
         "Use only the detail needed for this contribution. Do not repeat established information or add atmosphere, "

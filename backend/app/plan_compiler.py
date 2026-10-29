@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from textwrap import dedent
 from typing import Any
 
 from fastapi import HTTPException
@@ -13,7 +12,9 @@ from .execution.provider import OpenAICompatibleProvider
 from .mode_contracts import MODE_CONTRACTS
 from .plan_generation import generate_plan_object
 from .plan_phases import normalize_plan_phases
+from .plan_prompt import PLAN_SYSTEM, expand_plan_core, plan_prompt
 from .schemas import (
+    BackgroundEntry,
     NodePosition,
     PlanCompileRequest,
     PlanCompileResponse,
@@ -21,6 +22,8 @@ from .schemas import (
     WorkflowEdge,
     WorkflowNode,
 )
+
+
 async def compile_workflow_from_plan(
     provider: OpenAICompatibleProvider,
     request: PlanCompileRequest,
@@ -32,6 +35,11 @@ async def compile_workflow_from_plan(
     extracted, generation = await _extract_plan_structured(provider=provider, req=request)
     simulation_blueprint = _build_simulation_blueprint(extracted=extracted, req=request)
     workflow = _build_workflow_from_extracted(extracted=extracted, req=request, simulation_blueprint=simulation_blueprint)
+    workflow.environment.context_book.entries.append(BackgroundEntry(
+        id="source_plan", title="Original user request", content=request.plan_text, kind="instruction",
+        visibility={"scope": "private", "node_ids": ["director_1"]}, source="user", priority=0,
+        activation={"always": False},
+    ))
     if request.evidence_pack:
         evidence = compact_evidence(request.evidence_pack)
         workflow.environment.simulation["evidence"] = evidence
@@ -47,152 +55,10 @@ async def compile_workflow_from_plan(
 
 
 async def _extract_plan_structured(provider: OpenAICompatibleProvider, req: PlanCompileRequest) -> tuple[dict, dict]:
-    sys_prompt = (
-        "You are a process architect for a distributed multi-agent simulation system. "
-        "Turn a loose user plan into a complete but lightweight task contract and a set of autonomous participant identities. "
-        "Cover the relevant actor/entity identities, uncertainty, constraints and outputs concisely. "
-        "Only research modes need research methodology; inapplicable fields may be empty. Do not repeat facts across sections. "
-        "Prioritize complete JSON, the task contract and named participant identities over optional detail. "
-        "Do not assume the user has already provided every detail; "
-        "infer sensible defaults and mark uncertain items as assumptions."
+    parsed, generation = await generate_plan_object(
+        provider, PLAN_SYSTEM, plan_prompt(req), retry_prompt=plan_prompt(req, core_only=True),
     )
-    evidence = compact_evidence(req.evidence_pack) if req.evidence_pack else {}
-    user_prompt = dedent(
-        f"""
-        Parse the plan into strict JSON only.
-        Mode hint: {req.mode}
-        Max agents: {max(2, min(req.max_agents, 12))}
-        Language: {req.language}
-
-        Director decomposition rules:
-        - Identify the real objective behind the user's words, not just the surface task.
-        - First define one shared task contract: what is being done, what the final deliverable is, how it should be expressed, shared background and constraints, and when it is complete.
-        - Then define each participant's identity contract: who it is, its own goal, what it knows and does not know, what it can do, and its boundaries.
-        - Choose mode/submode based on intent: roleplay for story/character evolution, research.simulation for "what would happen", research.research for simulated study/fieldwork, research.consulting for issue-tree/workstream reasoning, custom only when no standard mode fits.
-        - Decide whether the simulation should use individuals, cohorts, organizations, environment, events, or artifacts.
-        - For research/consulting, define hypotheses, decision criteria, sample or actor logic, bias risks, validation gaps, and outputs.
-        - Define phases only within the requested segment. A requested ending starts at its final confrontation, not at world setup. Do not force a full-story arc or prescribe participants' outcomes. Supply explicit time_context and spatial_context when established; unknown coordinates may remain empty.
-        - In roleplay or world-evolution simulation, roles must be entities inside the simulated world; use writers, editors, analysts, or other production roles only when the user explicitly asks for collaborative creation.
-        - Define participants by their in-world or professional identity, not by literary functions such as emotional core, plot device, comic relief, or twist generator.
-        - A requested writing style controls how participant output is represented. It never grants a participant authority to write other participants' actions or invent global facts.
-        - Keep the design runnable locally: prefer a small number of high-leverage agents unless the user asks for scale.
-        - The plan may be a short sentence; still return a complete structure with assumptions.
-
-        Required JSON schema:
-        {{
-          "intent_mode": "roleplay|research|custom",
-          "intent_submode": "simulation|research|consulting|none",
-          "goal": "string",
-          "domain": "string",
-          "audience": "string",
-          "deliverable": "string",
-          "task_contract": {{
-            "objective": "string",
-            "process_type": "string",
-            "deliverable": {{
-              "type": "string",
-              "format": "string",
-              "language": "string",
-              "style": "string",
-              "expression_rules": ["string"],
-              "required_parts": ["string"]
-            }},
-            "shared_background": "string",
-            "shared_constraints": ["string"],
-            "completion_condition": "string"
-          }},
-          "phases": [{{"name":"string","objective":"string","exit_criteria":"string"}}],
-          "constraints": ["string"],
-          "key_questions": ["string"],
-          "assumptions": ["string"],
-          "hypotheses": ["string"],
-          "success_metrics": ["string"],
-          "decision_criteria": ["string"],
-          "method_modules": ["market_scan|user_segmentation|competitor_analysis|scenario_testing|risk_review|strategy_synthesis"],
-          "semantics": {{
-            "mode": "individual|cohort|mixed|workstream",
-            "confidence": 0.0,
-            "reason": "string"
-          }},
-          "roles": [
-            {{
-              "name":"string",
-              "count":1,
-              "focus":"string",
-              "entity_type":"individual|group|organization|environment|event|artifact",
-              "responsibilities":["string"],
-              "identity_contract": {{
-                "identity":"string",
-                "objective":"string",
-                "knowledge":["string"],
-                "unknowns":["string"],
-                "capabilities":["string"],
-                "boundaries":["string"]
-              }}
-            }}
-          ],
-          "research_design": {{
-            "methodology": "string",
-            "sample_logic": "string",
-            "segments": ["string"],
-            "variables": ["string"],
-            "bias_risks": ["string"],
-            "validation_plan": ["string"]
-          }},
-          "simulation_design": {{
-            "initial_state": "string",
-            "entities": ["string"],
-            "interaction_rules": ["string"],
-            "phase_logic": ["string"],
-            "stop_conditions": ["string"],
-            "uncertainty_factors": ["string"]
-          }},
-          "output_plan": {{
-            "full_log": true,
-            "briefing_sections": ["string"],
-            "narrative_options": ["string"]
-          }},
-          "output_contract": {{
-            "format": "dialogue|story|report|simulation|custom",
-            "max_items": 0,
-            "unit": "utterance|line|section|none",
-            "final_only": true
-          }},
-          "quality_controls": ["string"],
-          "environment": {{
-            "time_context":"string",
-            "spatial_context":"string",
-            "profile":"string",
-            "scenario":"string",
-            "facts":["string"],
-            "constraints":["string"],
-            "glossary": {{}},
-            "context_book": {{
-              "entries": [
-                {{
-                  "title": "string",
-                  "content": "standalone background, rule, belief, rumor, assumption, or knowledge",
-                  "kind": "background|entity|rule|fact|knowledge|method|belief|rumor|assumption|instruction",
-                  "visible_to": ["all or exact role names"],
-                  "always": true,
-                  "keywords": ["short phrase"],
-                  "semantic_hint": "when this information matters",
-                  "priority": 50
-                }}
-              ]
-            }}
-          }}
-        }}
-
-        Plan:
-        {req.plan_text}
-
-        User-provided evidence package (treat as supplied source material, distinguish it from assumptions):
-        {json.dumps(evidence, ensure_ascii=False, default=str) if evidence else "none"}
-        """
-    ).strip()
-    parsed, generation = await generate_plan_object(provider, sys_prompt, user_prompt)
-    return _normalize_extracted(parsed, req), generation
+    return _normalize_extracted(expand_plan_core(parsed), req), generation
 
 
 def _normalize_extracted(data: dict, req: PlanCompileRequest) -> dict:
@@ -255,7 +121,8 @@ def _normalize_extracted(data: dict, req: PlanCompileRequest) -> dict:
     simulation_design = _normalize_simulation_design(data.get("simulation_design", {}))
     semantics = _normalize_semantics(data.get("semantics", {}), req=req, roles=roles, text=req.plan_text)
     goal = str(data.get("goal", "")).strip() or req.plan_text[:120]
-    deliverable = str(data.get("deliverable", "")).strip() or "structured report"
+    default_deliverable = "story" if intent_mode == "roleplay" else "simulation" if intent_mode == "custom" else "report"
+    deliverable = str(data.get("deliverable", "")).strip() or default_deliverable
     task_raw = data.get("task_contract", {})
     if not isinstance(task_raw, dict):
         task_raw = {}
@@ -273,7 +140,7 @@ def _normalize_extracted(data: dict, req: PlanCompileRequest) -> dict:
             "expression_rules": _as_str_list(deliverable_raw.get("expression_rules", [])),
             "required_parts": _as_str_list(deliverable_raw.get("required_parts", [])),
         },
-        "shared_background": str(task_raw.get("shared_background", "")).strip() or req.plan_text[:500],
+        "shared_background": str(task_raw.get("shared_background", "")).strip(),
         "shared_constraints": _as_str_list(task_raw.get("shared_constraints", [])) or _as_str_list(data.get("constraints", [])),
         "completion_condition": str(task_raw.get("completion_condition", "")).strip()
         or "The requested deliverable is complete and consistent with the shared constraints.",
@@ -303,7 +170,7 @@ def _normalize_extracted(data: dict, req: PlanCompileRequest) -> dict:
         "quality_controls": _as_str_list(data.get("quality_controls", [])),
         "environment": {
             "profile": str(env.get("profile", "")).strip(),
-            "scenario": str(env.get("scenario", "")).strip() or req.plan_text[:220],
+            "scenario": str(env.get("scenario", "")).strip() or goal,
             "time_context": _environment_time_context(env),
             "spatial_context": _environment_spatial_context(env),
             "facts": _as_str_list(env.get("facts", [])),

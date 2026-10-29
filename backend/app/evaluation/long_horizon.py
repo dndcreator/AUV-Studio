@@ -146,7 +146,6 @@ def evaluate_long_horizon(
             model_checks = {
                 "response_available": bool(response.strip()),
                 "response_json_valid": bool(parsed),
-                "required_terms_used": all(term.casefold() in folded for term in required_terms),
                 "forbidden_terms_not_leaked": not any(term.casefold() in folded for term in forbidden_terms),
                 "decision_not_instruction_echo": bool(decision)
                 and _normalize(decision) != _normalize(str(checkpoint["question"])),
@@ -159,6 +158,7 @@ def evaluate_long_horizon(
                 "estimated_tokens": checkpoint["estimated_tokens"],
                 "checks": {**mechanical, **model_checks},
                 "response": response,
+                "lexical_diagnostics": {"required_terms_present": all(term.casefold() in response.casefold() for term in required_terms)},
             }
         )
 
@@ -172,6 +172,8 @@ def evaluate_long_horizon(
     return {
         "score": round(sum(1 for passed in flat if passed) / len(flat) * 100, 1) if flat else 0.0,
         "mode": "real" if real_mode else "simulated",
+        "scope": "scripted_sparse_checkpoint_recall",
+        "semantic_status": "review_required" if real_mode else "not_evaluated",
         "failures": failures,
         "checkpoints": checks,
         "stats": {

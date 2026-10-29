@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict, dataclass
+import copy
+import hashlib
+import math
+from dataclasses import asdict, dataclass, replace
+from time import perf_counter
 from typing import Any
 
 from ..execution.provider import ProviderError
+from ..execution.context_book import estimate_tokens as _estimate_tokens
 
 
 class EvalBudgetExceeded(RuntimeError):
@@ -19,6 +24,15 @@ class EvalBudget:
     max_cost_usd: float = 0.50
     input_usd_per_million: float = 1.00
     output_usd_per_million: float = 4.00
+    planning_output_tokens: int = 2400
+
+    def __post_init__(self) -> None:
+        if (type(self.max_calls) is not int or self.max_calls < 0 or any(type(value) is not int or value <= 0
+                for value in (self.max_total_tokens, self.max_output_tokens_per_call, self.planning_output_tokens))):
+            raise ValueError("call allowance must be a nonnegative integer; other budget limits must be positive integers")
+        if any(type(value) not in (int, float) or not math.isfinite(value) or value < 0 for value in
+               (self.max_cost_usd, self.input_usd_per_million, self.output_usd_per_million)) or self.max_cost_usd <= 0:
+            raise ValueError("budget prices and cost ceiling must be finite nonnegative numbers, with a positive ceiling")
 
 
 @dataclass
@@ -38,18 +52,42 @@ class EvalUsage:
 
 
 class BudgetedProvider:
+    def with_provider(self, provider: Any) -> BudgetedProvider:
+        """An independent judge context shares the same physical-attempt budget, never a fresh allowance."""
+        scoped = copy.copy(self)
+        scoped.provider = provider
+        if hasattr(provider, "retry_count"):
+            provider.retry_count = 0
+        if hasattr(provider, "max_output_tokens"):
+            provider.max_output_tokens = self.budget.max_output_tokens_per_call
+        return scoped
+
+    @property
+    def planning_output_tokens(self) -> int:
+        return self.budget.planning_output_tokens
+
+    def with_output_limit(self, limit: int) -> BudgetedProvider:
+        scoped = copy.copy(self)
+        scoped.budget = replace(self.budget, max_output_tokens_per_call=limit)
+        if hasattr(self.provider, "with_output_limit"):
+            scoped.provider = self.provider.with_output_limit(limit)
+        # Usage, retries and categories deliberately remain shared with the parent budget.
+        return scoped
+
     def remaining_budget(self) -> dict[str, Any]:
         return {"remaining_calls": max(0, self.budget.max_calls - self.usage.calls),
                 "remaining_tokens": max(0, self.budget.max_total_tokens - self.usage.input_tokens - self.usage.output_tokens),
                 "remaining_estimated_cost_usd": max(0, round(self.budget.max_cost_usd - self.usage.estimated_cost_usd(self.budget), 6))}
 
-    def __init__(self, provider: Any, budget: EvalBudget, *, retry_count: int = 0) -> None:
+    def __init__(self, provider: Any, budget: EvalBudget, *, retry_count: int = 0, capture_trace: bool = False) -> None:
         self.provider = provider
         self.budget = budget
         self.usage = EvalUsage()
         self.retry_count = max(0, min(retry_count, 2))
         self.retries: list[dict[str, Any]] = []
         self.usage_by_kind: dict[str, dict[str, int]] = {}
+        self.capture_trace = capture_trace
+        self.request_trace: list[dict[str, Any]] = []
         # Count each physical attempt here instead of hiding transport retries inside it.
         if hasattr(provider, "retry_count"):
             provider.retry_count = 0
@@ -71,17 +109,31 @@ class BudgetedProvider:
         estimated_input = _estimate_tokens(system_prompt) + _estimate_tokens(user_prompt)
         self._check_before_call(estimated_input)
         self.usage.calls += 1
+        started = perf_counter()
+        trace: dict[str, Any] = {"attempt": self.usage.calls,
+                                 "input_digest": hashlib.sha256((system_prompt + "\0" + user_prompt).encode()).hexdigest()}
+        if self.capture_trace:
+            self.request_trace.append(trace)
         try:
             response = await self.provider.chat(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
-        except Exception:
+        except (Exception, asyncio.CancelledError) as exc:
             # Failed requests may still be billed. Record the conservative reserved amount.
             self._record_usage(system_prompt, estimated_input, self.budget.max_output_tokens_per_call, failed=True)
+            trace.update(status="error", error_type=type(exc).__name__, error_code=getattr(exc, "code", None),
+                         input_tokens=estimated_input, output_tokens=self.budget.max_output_tokens_per_call,
+                         duration_ms=round((perf_counter() - started) * 1000))
             raise
         raw = response.get("raw", {}) if isinstance(response, dict) else {}
         raw_usage = raw.get("usage", {}) if isinstance(raw, dict) else {}
         input_tokens = _usage_int(raw_usage, "prompt_tokens", "input_tokens") or estimated_input
         output_tokens = _usage_int(raw_usage, "completion_tokens", "output_tokens") or _estimate_tokens(str(response.get("content", "")))
         self._record_usage(system_prompt, input_tokens, output_tokens)
+        choices = raw.get("choices", []) if isinstance(raw, dict) else []
+        finish = choices[0].get("finish_reason") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
+        trace.update(status="received", input_tokens=input_tokens, output_tokens=output_tokens,
+                     output_digest=hashlib.sha256(str(response.get("content", "")).encode()).hexdigest(),
+                     finish_reason=str(finish or raw.get("done_reason", "unknown"))[:80] if isinstance(raw, dict) else "unknown",
+                     duration_ms=round((perf_counter() - started) * 1000))
         if self.usage.input_tokens + self.usage.output_tokens > self.budget.max_total_tokens:
             raise EvalBudgetExceeded("evaluation token budget exceeded")
         if self.usage.estimated_cost_usd(self.budget) > self.budget.max_cost_usd:
@@ -89,7 +141,8 @@ class BudgetedProvider:
         return response
 
     def _record_usage(self, system: str, input_tokens: int, output_tokens: int, *, failed: bool = False) -> None:
-        categories = {"action consistency checker": "action_check", "literary fidelity checker": "writing_check",
+        categories = {"independent evidence-based regression judge": "judge", "fixed criteria": "judge",
+                      "action consistency checker": "action_check", "literary fidelity checker": "writing_check",
                       "process architect": "planning", "route attention": "routing", "continuity auditor": "audit",
                       "State Coder repairing": "state_repair", "autonomous participant": "actor", "finished literary work": "writing"}
         kind = next((kind for marker, kind in categories.items() if marker in system), "other")
@@ -111,10 +164,6 @@ class BudgetedProvider:
         ) / 1_000_000
         if projected_cost > self.budget.max_cost_usd:
             raise EvalBudgetExceeded("next call would exceed the evaluation cost budget")
-
-
-def _estimate_tokens(text: str) -> int:
-    return max(1, (len(text) + 3) // 4)
 
 
 def _usage_int(usage: Any, *keys: str) -> int:

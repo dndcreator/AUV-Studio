@@ -82,7 +82,7 @@ from .simulation_loop import (
     parse_director_control,
 )
 from .output_utils import output_text
-from .scene_control import apply_scene_audit, init_scene_control, normalize_scene_contract, scene_audit_instruction
+from .scene_control import apply_scene_audit, init_scene_control, normalize_scene_contract, scene_audit_instruction, scene_progress_feedback
 from .simulation_state import init_simulation_state, update_simulation_state
 
 
@@ -450,6 +450,7 @@ class WorkflowEngine:
                     round_index=round_index,
                     action_index=action_index + 1,
                     scene_contract=context["_scene_control"]["contract"],
+                    progress_feedback=scene_progress_feedback(context["_scene_control"]),
                 )
                 context_packet["interactions"] = interactions
                 context_packet["environment"] = {key: value for key, value in context.get("_runtime_environment", {}).items()
@@ -579,6 +580,7 @@ class WorkflowEngine:
                 or action_index >= policy.max_actions
                 or round_index >= policy.max_rounds
                 or int(context["_scene_control"].get("stagnation", 0)) >= 2
+                or int(context["_scene_control"].get("goal_stagnation", 0)) >= 2
             )
             if director is not None and should_audit:
                 simulation_state = context.get("_simulation", {})

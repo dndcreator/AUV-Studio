@@ -4,6 +4,8 @@ import asyncio
 import copy
 import json
 
+import pytest
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -11,8 +13,9 @@ from app.db import Base
 from app.execution.checkpoints import continuous_snapshot, restore_continuous_checkpoint
 from app.execution.director_policy import assess_output_quality
 from app.execution.engine import WorkflowEngine
-from app.execution.scene_control import apply_scene_audit, init_scene_control, normalize_scene_contract, scene_audit_instruction
+from app.execution.scene_control import apply_scene_audit, init_scene_control, normalize_scene_contract, scene_audit_instruction, scene_progress_feedback
 from app.execution.action_output import normalize_action_output
+from app.evaluation.quality import evaluate_run
 from app.execution.simulation_state import init_simulation_state
 from app.models import NodeRunRecord, RunEventRecord, RunRecord
 from app.schemas import RollbackRequest, RunRequest, WorkflowDefinition
@@ -178,4 +181,123 @@ def test_real_engine_protocol_checks_false_delta_without_extra_calls_and_can_sto
         for row in db.query(NodeRunRecord).filter(NodeRunRecord.node_id.in_(["a", "b"])):
             assert json.loads(row.input_json)["context"]["scene_contract"] == CONTRACT
         assert len(provider.prompts) == 8
+    database.dispose()
+
+
+def goal_judgment(round_index, progress="none", stagnant=False):
+    return {"round": round_index, "stagnant": stagnant, "reason": "New dialogue occurred.",
+            "goal_progress": progress, "goal_reason": "Compared accepted actions with the actual exit conditions."}
+
+
+def test_goal_progress_is_independent_of_novelty_and_feedback_escalates_without_rewriting_contract():
+    current = {**init_scene_control(), "contract": copy.deepcopy(CONTRACT)}
+    for round_index in range(1, 7):
+        current, assessment = apply_scene_audit(current, {"decision": "continue", "round_progress": [goal_judgment(round_index)]},
+                                                state={}, round_index=round_index)
+        assert current["stagnation"] == 0
+        assert current["goal_stagnation"] == round_index
+        assert assessment["unassessed_goal_rounds"] == []
+        assert current["contract"] == CONTRACT
+        feedback = scene_progress_feedback(current)
+        assert feedback.get("level") == (None if round_index == 1 else "refocus" if round_index < 4 else "reassess" if round_index < 6 else "consider_stop")
+    advanced, _ = apply_scene_audit(current, {"round_progress": [goal_judgment(7, "advanced")]}, state={}, round_index=7)
+    assert advanced["goal_stagnation"] == 0 and scene_progress_feedback(advanced) == {}
+    transitioned, assessment = apply_scene_audit(current, {"decision": "transition", "scene_contract": CONTRACT,
+        "round_progress": [goal_judgment(7)]}, state={}, round_index=7)
+    assert transitioned["goal_stagnation"] == 0 and scene_progress_feedback(transitioned) == {}
+    assert assessment["goal_stagnation"] == 7
+
+
+@pytest.mark.parametrize("patch", [
+    {"goal_progress": "uncertain"}, {"goal_progress": []}, {"goal_progress": "advanced", "goal_reason": ""},
+    {"round": 1}, {"round": 99}, {"stagnant": "false"},
+])
+def test_missing_invalid_or_replayed_goal_judgments_are_unassessed_not_success_or_stagnation(patch):
+    current = {**init_scene_control(), "last_audited_round": 1, "goal_stagnation": 1}
+    result, assessment = apply_scene_audit(current, {"round_progress": [{**goal_judgment(2), **patch}]}, state={}, round_index=2)
+    assert result["goal_stagnation"] == 0
+    assert assessment["unassessed_goal_rounds"] == [2]
+    assert assessment["goal_needs_attention"] is False
+
+
+def test_micro_progress_preserves_slow_detail_and_prompt_requires_evidence_not_word_count():
+    current = {**init_scene_control(), "contract": copy.deepcopy(CONTRACT)}
+    for round_index in range(1, 5):
+        current, _ = apply_scene_audit(current, {"round_progress": [goal_judgment(round_index, "advanced")]}, state={}, round_index=round_index)
+        assert scene_progress_feedback(current) == {}
+        assert current["contract"] == CONTRACT
+    prompt = scene_audit_instruction(state={}, scene_control=current, recent_actions=[], round_index=5, max_actions=20)
+    assert "goal_progress SEPARATELY from novelty" in prompt
+    assert "do not fabricate pressure" in prompt
+    assert "at the contracted progress_scale" in prompt
+
+
+def test_duplicate_conflicting_round_judgments_cannot_establish_goal_progress_or_stagnation():
+    result, assessment = apply_scene_audit(init_scene_control(), {"round_progress": [
+        goal_judgment(1, "advanced"), goal_judgment(1, "none"), goal_judgment(2, "none"),
+    ]}, state={}, round_index=2)
+    assert assessment["unassessed_goal_rounds"] == assessment["unassessed_rounds"] == [1]
+    assert result["goal_stagnation"] == 1
+
+
+def test_effect_evaluation_marks_missing_goal_assessments_as_missing_coverage():
+    result = evaluate_run({"status": "succeeded", "node_runs": []}, {"require_scene_control": True}, [{
+        "event": "episode_audited", "payload": {"progress_assessment": {
+            "round_progress": [{"round": 1, "stagnant": False}], "unassessed_rounds": [],
+        }},
+    }])
+    assert result["checks"]["director_assesses_each_round"] is True
+    assert result["checks"]["director_assesses_goal_progress"] is False
+    assert any("goal progress" in finding for finding in result["findings"])
+
+
+def test_real_engine_supplies_goal_feedback_and_rolls_back_the_counter_without_extra_calls_or_invented_completion():
+    class Provider:
+        def __init__(self):
+            self.round = 0
+            self.calls = 0
+            self.actor_feedback = []
+
+        async def chat(self, model, system_prompt, user_prompt):
+            self.calls += 1
+            if "action consistency checker" in system_prompt:
+                content = {"decision": "accept", "reason": "Offline fixture.", "scope": {"self_owned": True, "public_only": True}, "findings": []}
+            elif "route attention" in system_prompt:
+                self.round += 1
+                content = {"active_node_ids": ["a", "b"], "scene_contract": CONTRACT}
+                if self.round >= 3:
+                    assert '"level": "refocus"' in user_prompt or '"level": "reassess"' in user_prompt
+            elif "continuity auditor" in system_prompt:
+                content = {"decision": "stop" if self.round == 6 else "continue", "task_complete": False,
+                           "completion_reason": "Still no grounded path to completion.", "round_progress": [goal_judgment(self.round)],
+                           "state_patch": {"schema_ops": [], "state_ops": []}}
+            else:
+                self.actor_feedback.append((self.round, '"level": "refocus"' in user_prompt, '"level": "reassess"' in user_prompt))
+                content = {"participation": "act", "action": "I offer another explanation, not a resolution.", "intent": "PRIVATE-PLAN", "turn_delta": "A different explanation."}
+            return {"content": json.dumps(content)}
+
+    wf = workflow()
+    wf.environment.simulation["horizon_rounds"] = 6
+    database = create_engine("sqlite://")
+    Base.metadata.create_all(database)
+    provider = Provider()
+    with sessionmaker(bind=database)() as db:
+        run_id = asyncio.run(WorkflowEngine(provider).run(db, wf, RunRequest()))
+        run = db.get(RunRecord, run_id)
+        output = json.loads(run.output_json)
+        assert run.status == "stopped" and output["completion"]["status"] == "incomplete"
+        assert len(output["actions"]) == 12 and provider.calls == 36
+        assert output["scene_control"]["goal_stagnation"] == 6
+        assert output["scene_control"]["stagnation"] == 0
+        assert "goal_stagnation" not in output["simulation"]
+        assert all(refocus for round_index, refocus, _ in provider.actor_feedback if round_index in (3, 4))
+        assert all(reassess for round_index, _, reassess in provider.actor_feedback if round_index in (5, 6))
+        assert "PRIVATE-PLAN" not in json.dumps(scene_progress_feedback(output["scene_control"]))
+        audits = db.query(RunEventRecord).filter_by(run_id=run_id, event="episode_audited").order_by(RunEventRecord.seq).all()
+        _, rollback = build_rollback_request(db, run_id, RollbackRequest(event_seq=audits[2].seq))
+        restored = {}
+        restore_continuous_checkpoint(restored, rollback)
+        assert restored["_scene_control"]["goal_stagnation"] == 3
+        assert scene_progress_feedback(restored["_scene_control"])["level"] == "refocus"
+        assert verify_run_audit(db, run_id).verified
     database.dispose()

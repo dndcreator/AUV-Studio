@@ -29,7 +29,7 @@ def test_long_horizon_simulation_preserves_memory_and_worldbook_privacy() -> Non
     }
 
 
-def test_long_horizon_real_response_checks_detect_forgetting_and_leakage() -> None:
+def test_long_horizon_diagnostics_separate_keyword_gaps_and_proven_leakage() -> None:
     scenario = _load_scenario()
     checkpoints = build_long_horizon_checkpoints(scenario)
     responses = {
@@ -42,7 +42,8 @@ def test_long_horizon_real_response_checks_detect_forgetting_and_leakage() -> No
 
     assert evaluation["mode"] == "real"
     assert evaluation["score"] < 100
-    assert "mara_final_commitment: required_terms_used" in evaluation["failures"]
+    assert next(row for row in evaluation["checkpoints"] if row["id"] == "mara_final_commitment")["lexical_diagnostics"]["required_terms_present"] is False
+    assert evaluation["semantic_status"] == "review_required"
     assert "crowd_privacy: forbidden_terms_not_leaked" in evaluation["failures"]
 
 

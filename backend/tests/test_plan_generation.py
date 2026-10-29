@@ -5,14 +5,19 @@ import json
 from types import SimpleNamespace
 
 import pytest
+import httpx
 from fastapi.testclient import TestClient
 
 from app.evaluation.budget import BudgetedProvider, EvalBudget, EvalBudgetExceeded
 from app.execution.provider import ProviderError
+from app.execution.provider import OpenAICompatibleProvider
+from app.execution.context_book import build_scene_context_pack, context_for_node
+from app.execution.action_consistency import build_consistency_evidence
 from app.main import app
 from app.plan_compiler import compile_workflow_from_plan
 from app.plan_generation import PlanGenerationError, generate_plan_object
-from app.schemas import PlanCompileRequest
+from app.schemas import PlanCompileRequest, WorkflowDefinition
+from app.plan_prompt import plan_prompt
 
 
 VALID = {"intent_mode": "roleplay", "goal": "Visit a guild", "roles": [{"name": "Adventurer", "count": 1}, {"name": "Clerk", "count": 1}]}
@@ -47,7 +52,9 @@ def test_invalid_plan_regenerates_once_without_applying_a_fallback(bad, code, ca
     assert len(provider.prompts) == 2
     assert result.generation["attempts"] == 2
     assert result.generation["recovered_errors"][0]["code"] == code
-    assert "Regenerate one COMPLETE compact JSON" in provider.prompts[1]
+    assert "CORE RECOVERY FORMAT" in provider.prompts[1]
+    assert "COMPACT PLANNING FORMAT" not in provider.prompts[1]
+    assert len(provider.prompts[1]) < len(provider.prompts[0])
     assert {node.config.get("entity_name") for node in result.workflow.nodes} >= {"Adventurer", "Clerk"}
     assert code in caplog.text
 
@@ -195,3 +202,97 @@ def test_simulation_success_does_not_hide_a_failed_literary_deliverable(monkeypa
 
     monkeypatch.setattr(runner, "_execute", execute)
     assert runner.main(["--scenario", "roleplay_basic", "--execute", "--max-calls", "18"]) == 1
+
+
+@pytest.mark.parametrize("mode", ["roleplay", "research", "auto", "custom"])
+def test_compact_schema_is_mode_appropriate_and_core_retry_replaces_it(mode):
+    request = PlanCompileRequest(plan_text="ORIGINAL-REQUEST-TAIL", mode=mode)
+    compact, core = plan_prompt(request), plan_prompt(request, core_only=True)
+    assert len(core) < len(compact)
+    assert '"environment":' not in core and '"assumptions":' not in core
+    assert "completion_condition" in core and "deliverable" in core
+    assert request.plan_text in compact and request.plan_text in core
+    assert "research_design" not in compact and "method_modules" not in compact
+    assert ("sample_logic" in compact) is (mode in {"research", "auto"})
+
+
+def test_small_semantic_plan_fills_dto_and_keeps_full_original_without_peer_leakage():
+    text = "Write a final exchange, including 对话. " + "Background remains available. " * 60 + "PRIVATE-TAIL-FACT"
+    core = {"intent_mode": "roleplay", "goal": "Resolve this exchange.", "initial_state": "Both are in the hall.",
+            "completion_condition": "A binding choice is made.", "constraints": ["No invented witnesses."],
+            "deliverable": {"format": "story", "style": "Restrained western tragedy."},
+            "roles": [{"name": "Aldric", "objective": "Seek a binding answer.", "knowledge": ["I hold the evidence."],
+                       "boundaries": ["Control only myself."]}, {"name": "Reginald", "objective": "Keep the crown."}]}
+    result = asyncio.run(compile_workflow_from_plan(Sequence(response(core)), PlanCompileRequest(plan_text=text, mode="roleplay", max_agents=2)))
+    workflow = WorkflowDefinition.model_validate_json(result.workflow.model_dump_json())
+    source = next(entry for entry in workflow.environment.context_book.entries if entry.id == "source_plan")
+    assert source.content == text and source.visibility.scope == "private" and source.visibility.node_ids == ["director_1"]
+    assert source.activation.always is False and source.priority == 0
+    assert "PRIVATE-TAIL-FACT" not in workflow.environment.scenario
+    actors = [node for node in workflow.nodes if node.id.startswith("agent_")]
+    assert len(actors) == 2 and all(node.config["identity_contract"]["identity"] for node in actors)
+    assert actors[0].config["identity_contract"]["objective"] == "Seek a binding answer."
+    assert actors[0].config["identity_contract"]["knowledge"] == ["I hold the evidence."]
+    simulation = workflow.environment.simulation
+    assert simulation["task_contract"]["deliverable"]["language"] == "zh"
+    assert simulation["task_contract"]["completion_condition"] == core["completion_condition"]
+    assert simulation["output_contract"]["format"] == "story"  # Mentioning dialogue does not override the model's format.
+    assert simulation["research_design"]["methodology"] == ""
+    pack = build_scene_context_pack(environment=workflow.environment, state={}, recent_actions=[])
+    assert "PRIVATE-TAIL-FACT" not in json.dumps(context_for_node(pack, actors[1]))
+    evidence = build_consistency_evidence(workflow, {}, [], {"role": {"node_id": actors[0].id}})
+    assert next(row for row in evidence if row["id"] == "book.source_plan")["value"]["content"] == text
+
+
+def test_compact_research_keeps_semantic_methodology_without_asking_for_runtime_boilerplate():
+    data = {**VALID, "intent_mode": "research", "intent_submode": "research",
+            "research": {"methodology": "Simulated interviews", "sample_logic": "Two contrasting segments",
+                         "questions": ["What blocks adoption?"], "hypotheses": ["Price constrains demand"],
+                         "bias_risks": ["Model prior"], "validation_plan": ["Compare real interviews"]}}
+    result = asyncio.run(compile_workflow_from_plan(Sequence(response(data)), PlanCompileRequest(plan_text="Study adoption", mode="research")))
+    assert result.extracted["research_design"]["methodology"] == "Simulated interviews"
+    assert result.extracted["hypotheses"] == ["Price constrains demand"]
+    assert result.extracted["key_questions"] == ["What blocks adoption?"]
+
+
+@pytest.mark.parametrize("field,value", [("objective", []), ("knowledge", "not a list"), ("boundaries", [{}])])
+def test_wrong_semantic_field_types_regenerate_instead_of_stringifying_them(field, value):
+    bad = {**VALID, "roles": [{"name": "A", field: value}]}
+    provider = Sequence(response(bad), response())
+    result = asyncio.run(compile_workflow_from_plan(provider, PlanCompileRequest(plan_text="An encounter")))
+    assert result.generation["attempts"] == 2 and result.generation["format"] == "core"
+
+
+def test_real_http_payloads_have_scoped_planning_limits_and_share_one_budget(monkeypatch):
+    calls = []
+    responses = [response("truncated", "length"), response(), response()]
+
+    def handle(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": responses[len(calls) - 1]["content"]},
+                                                       "finish_reason": "length" if len(calls) == 1 else "stop"}],
+                                        "usage": {"prompt_tokens": 20, "completion_tokens": 30}})
+
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr("app.execution.provider.httpx.AsyncClient",
+                        lambda **kwargs: client_type(transport=httpx.MockTransport(handle), **kwargs))
+    inner = OpenAICompatibleProvider("https://offline.invalid/v1", "offline", 10, 0, max_output_tokens=400)
+    provider = BudgetedProvider(inner, EvalBudget(max_calls=3, max_total_tokens=20000, max_output_tokens_per_call=400, max_cost_usd=1))
+    result = asyncio.run(compile_workflow_from_plan(provider, PlanCompileRequest(plan_text="An encounter", mode="roleplay")))
+    asyncio.run(provider.chat("", "actor", "Act"))
+    assert [call["max_tokens"] for call in calls] == [2400, 1600, 400]
+    assert "CORE RECOVERY FORMAT" in calls[1]["messages"][1]["content"]
+    assert inner.max_output_tokens == 400 and provider.budget.max_output_tokens_per_call == 400
+    assert provider.usage.calls == 3 and provider.usage_by_kind["planning"]["calls"] == 2
+    assert provider.usage.output_tokens == 90 and result.generation["output_limit"] == 1600
+    with pytest.raises(EvalBudgetExceeded):
+        asyncio.run(provider.chat("", "actor", "Must not transmit a fourth request."))
+    assert len(calls) == 3
+
+
+def test_planning_reservation_cannot_bypass_total_token_or_cost_limits():
+    inner = Sequence(response())
+    provider = BudgetedProvider(inner, EvalBudget(max_calls=4, max_total_tokens=1000, max_output_tokens_per_call=64))
+    with pytest.raises(EvalBudgetExceeded):
+        asyncio.run(compile_workflow_from_plan(provider, PlanCompileRequest(plan_text="An encounter")))
+    assert provider.usage.calls == 0 and not inner.prompts

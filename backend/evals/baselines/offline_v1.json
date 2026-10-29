@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "offline_engineering_audit",
+  "recorded_at": "2026-10-29T16:37:00+08:00",
+  "scope": "AUV working tree; not a semantic model baseline",
+  "before": {"backend_passed": 413, "backend_duration_seconds": 11.58, "frontend_passed": 65, "frontend_build": "passed", "paid_model_calls": 0},
+  "after": {
+    "backend_passed": 471,
+    "backend_layers": {"unit": 314, "integration": 154, "system": 3},
+    "backend_duration_seconds": 28.96,
+    "frontend_passed": 65,
+    "frontend_duration_seconds": 3.43,
+    "frontend_build": "passed",
+    "behavior_capabilities": 8,
+    "behavior_cases": 19,
+    "proposed_calibration_cases": 17,
+    "calibration_review_status": "pending_human",
+    "paid_model_calls": 0,
+    "semantic_accuracy": null,
+    "judge_false_accept_rate": null,
+    "judge_false_reject_rate": null
+  },
+  "risk_dispositions": {"independent_risk_cases_deleted": 0, "scope_negative_parameters_relocated": 4, "api_test_file_renamed_not_deleted": true, "legacy_permissive_judge_parser_removed": true, "browser_end_to_end_automated": false},
+  "limitations": [
+    "Counts are not line/branch coverage or model accuracy.",
+    "Local single-run timings vary with host load and suite content; not a product-performance comparison. Earlier470-case full run took14.29s.",
+    "No paid evaluations, human calibration, provider-cost comparison or remote CI execution occurred."
+  ]
+}

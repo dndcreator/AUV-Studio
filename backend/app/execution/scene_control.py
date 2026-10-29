@@ -30,7 +30,23 @@ def normalize_scene_contract(raw: Any, state: dict[str, Any]) -> dict[str, Any]:
 
 
 def init_scene_control() -> dict[str, Any]:
-    return {"contract": {}, "stagnation": 0, "last_audited_round": 0}
+    return {"contract": {}, "stagnation": 0, "goal_stagnation": 0, "last_audited_round": 0}
+
+
+def scene_progress_feedback(scene_control: dict[str, Any]) -> dict[str, str]:
+    streak = int(scene_control.get("goal_stagnation", 0))
+    if streak < 2:
+        return {}
+    if streak < 4:
+        level = "refocus"
+        instruction = "Prioritize a grounded contribution toward the current exit conditions rather than repeating positions."
+    elif streak < 6:
+        level = "reassess"
+        instruction = "Reassess the established obstacles, available opportunities and time pressure; do not invent a new deadline or event."
+    else:
+        level = "consider_stop"
+        instruction = "Reassess whether useful progress remains possible; the Director may stop honestly with task_complete false."
+    return {"level": level, "instruction": instruction + " Preserve participant autonomy, knowledge boundaries, detail and pacing; do not force an outcome."}
 
 
 def scene_setup_instruction() -> str:
@@ -83,7 +99,8 @@ def scene_audit_instruction(
         "collaboration, and roleplay. Return JSON only: "
         '{"decision":"continue|transition|stop","task_complete":false,"completion_reason":"evidence-based goal assessment",'
         '"guidance":"short boundary constraint only",'
-        f'"reason":"brief audit reason","round_progress":[{{"round":{first_round},"stagnant":false,"reason":"observed change or justified waiting"}}],'
+        f'"reason":"brief audit reason","round_progress":[{{"round":{first_round},"stagnant":false,"reason":"observed change or justified waiting",'
+        '"goal_progress":"advanced|none|regressed|uncertain","goal_reason":"evidence of movement toward scene exit conditions"}],'
         '"scene_contract":null,"state_patch":{"schema_ops":[],"state_ops":[]}}. '
         f"Assess EACH completed round {first_round} through {round_index}, in order, using actual actions and "
         f"preserving these global round IDs: {list(range(first_round, round_index + 1))}. Do not renumber a later batch from 1. Use "
@@ -93,6 +110,16 @@ def scene_audit_instruction(
         "stagnant only when the round repeats or adds no useful development relative to the scene goal and "
         "progress_scale; never use word count as quality or require drama every turn. Slow pacing and high detail "
         "must not be mistaken for stagnation. High detail means selectively depicting meaningful particulars. "
+        "Assess goal_progress SEPARATELY from novelty: advanced means actual accepted contributions reduce the gap "
+        "to the current exit conditions at the contracted progress_scale; none means new content without that movement; "
+        "regressed means the gap widened; uncertain means the evidence is insufficient. Explain goal_reason from "
+        "actual accepted actions, not Turn Delta, word count, intention or self-reported success. An emotional shift "
+        "can be goal progress when the goal calls for it; mere novelty is not automatically progress toward resolution. "
+        "If two consecutive rounds show none/regressed, refocus the scene's advancement requirement. If this "
+        "persists for four rounds, reassess established obstacles, opportunities and existing time pressure. At six "
+        "rounds consider an honest incomplete stop if no useful path remains. Include prior goal_stagnation in "
+        "these counts. These are feedback thresholds, not forced pacing or mandatory stopping: respect slow/micro "
+        "development, do not fabricate pressure, transitions, role decisions or a predetermined result. "
         "If two consecutive completed rounds stagnate (including the previous counter), consider changing pacing "
         "or progress_scale, requesting closure, transition, or stopping; a justified continue is allowed. "
         "Before deciding to continue, separately check the scene exit_conditions and the overall task completion_condition. "
@@ -113,6 +140,7 @@ def scene_audit_instruction(
         "Use remaining allowance to tune pacing/scale toward the requested scope without scripting actors or "
         "inventing outcomes. A requested final segment does not need another setup phase. "
         f"EXECUTION ALLOWANCE:\n{json.dumps(allowance or {}, ensure_ascii=False)}\n"
+        f"GOAL FEEDBACK:\n{json.dumps(scene_progress_feedback(scene_control), ensure_ascii=False)}\n"
         f"Hard action limit: {max_actions}. Turn Delta and progress verdicts are runtime signals, not durable facts.\n\n"
         f"SCENE CONTROL:\n{json.dumps(scene_control, ensure_ascii=False, default=str)}\n\n"
         f"CURRENT MACRO STATE:\n{json.dumps(state, ensure_ascii=False, default=str)}\n\n"
@@ -132,32 +160,58 @@ def apply_scene_audit(
     result = copy.deepcopy(current)
     previous_round = int(result.get("last_audited_round", 0))
     judgments: dict[int, dict[str, Any]] = {}
+    seen_rounds: set[int] = set()
+    ambiguous_rounds: set[int] = set()
     raw_progress = control.get("round_progress", [])
     for item in raw_progress if isinstance(raw_progress, list) else []:
-        if not isinstance(item, dict) or type(item.get("stagnant")) is not bool:
+        if not isinstance(item, dict):
             continue
         value = item.get("round")
         if type(value) is int and previous_round < value <= round_index:
+            if value in seen_rounds:
+                ambiguous_rounds.add(value)
+            seen_rounds.add(value)
+            if type(item.get("stagnant")) is not bool:
+                continue
             judgments[value] = {"round": value, "stagnant": item["stagnant"], "reason": str(item.get("reason", ""))[:800]}
+            goal = item.get("goal_progress")
+            reason = item.get("goal_reason")
+            if (isinstance(goal, str) and goal in {"advanced", "none", "regressed", "uncertain"}
+                    and isinstance(reason, str) and reason.strip()):
+                judgments[value].update(goal_progress=goal, goal_reason=reason.strip()[:800])
+    for value in ambiguous_rounds:
+        judgments.pop(value, None)
     streak = int(result.get("stagnation", 0))
+    goal_streak = int(result.get("goal_stagnation", 0))
     needs_attention = False
+    goal_needs_attention = False
     for completed_round in range(previous_round + 1, round_index + 1):
         judgment = judgments.get(completed_round)
         # Missing semantic judgments cannot establish consecutive stagnation.
         streak = streak + 1 if judgment and judgment["stagnant"] else 0
         needs_attention = needs_attention or streak >= 2
+        goal = judgment.get("goal_progress") if judgment else None
+        # Missing/uncertain assessments are not progress and cannot prove consecutive lack of progress.
+        goal_streak = goal_streak + 1 if goal in {"none", "regressed"} else 0
+        goal_needs_attention = goal_needs_attention or goal_streak >= 2
     assessment = {
         "round_progress": [judgments[key] for key in sorted(judgments)],
         "stagnation": streak,
         "needs_attention": needs_attention,
+        "goal_stagnation": goal_streak,
+        "goal_needs_attention": goal_needs_attention,
+        "unassessed_goal_rounds": [value for value in range(previous_round + 1, round_index + 1)
+                                   if value not in judgments or judgments[value].get("goal_progress") in {None, "uncertain"}],
         "unassessed_rounds": [value for value in range(previous_round + 1, round_index + 1) if value not in judgments],
     }
     result["stagnation"] = streak
+    result["goal_stagnation"] = goal_streak
     result["last_audited_round"] = max(previous_round, round_index)
     patch = control.get("scene_contract")
     if control.get("decision") == "transition":
         result["contract"] = normalize_scene_contract(patch, state)
         result["stagnation"] = 0
+        result["goal_stagnation"] = 0
     elif isinstance(patch, dict):
         contract = result.get("contract", {})
         tunable = {key: patch[key] for key in ("pacing", "detail", "progress_scale") if key in patch}

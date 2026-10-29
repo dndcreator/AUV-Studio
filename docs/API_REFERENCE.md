@@ -161,6 +161,8 @@
 - Event 类型：`queued | running | waiting_human | human_resumed | director_overridden | director_corrected | director_vote_started | director_vote_cast | director_vote_finished | nodes_activated | episode_audited | context_pack_activated | dynamic_state_updated | dynamic_state_failed | stop_requested | stopped | succeeded | failed | skipped`
   - `nodes_activated.scene_contract`：首次路由建立的当前场景契约，后续路由沿用。
   - `episode_audited.progress_assessment`：按完整互动轮次记录 `round_progress`、连续 `stagnation`、`needs_attention` 和 `unassessed_rounds`；缺失判断不视作已通过。
+  - `round_progress` 每项另外包含 `goal_progress: advanced|none|regressed|uncertain` 与 `goal_reason`：分别判断新内容和接近场景退出条件，不能用自报 Delta、字数或新台词替代目标进展。缺失、无效、重复轮号或 uncertain 进入 `unassessed_goal_rounds`，不默认为通过。`goal_stagnation/goal_needs_attention` 只统计连续明确的 none/regressed。
+  - 角色 `context.progress_feedback` 为运行层生成的场景反馈，连续两轮未接近目标时为 `refocus`，四轮为 `reassess`，六轮为 `consider_stop`；恢复进展或转场后清除。它不写入 Dynamic State、不指定角色行为、不制造外部事件，也不把停止标记为完成。路由和后续导演审计收到同一反馈。
   - `episode_audited.scene_control`：契约、停滞计数和审计游标；同事件包含独立的内部 `_rollback_snapshot`。这些控制信息不属于领域事实。角色 `succeeded.payload.output.turn_delta` 可为空，不直接写入 Dynamic State。
   - `nodes_activated`：AI 语义路由为当前阶段选择了相关自治节点。
   - `episode_audited`：Director 在节点完成提案后审计继续、转段或结束，不代替节点作出内容决策。
@@ -195,7 +197,11 @@
 
 现有 `GET /api/runs/{run_id}/events`、Trace 和 Full Log 新增 `event=action_checked`，不新增配置页面或 HTTP 入口。节点在检查期间仍为 running；只有接纳后才发 succeeded。
 
-`payload` 包含 `version=3`、`round`、`action_index`、`attempt`（1 或 2）、`candidate` 和 `assessment`。语义核验另有 `check_attempt/context_digest`；正常 assessment 为 `{decision: accept|conflict|uncertain, reason, scope: {self_owned, public_only}, findings: [{category, reason, evidence_ids}]}`，scope 两项必须为布尔值。category 为 `spacetime|existence|capability|knowledge|causality|evidence`。引用的既有依据快照在 `cited_evidence` 中；核验失败记录 `decision=error/error_type`，另有各最多 600 字符的 `response_excerpt/diagnostic`，检查传输异常对外失败消息不回显私有检查上下文。
+语义核验 `payload` 包含 `version=4`、`round`、`action_index`、`attempt`（1 或 2）、`candidate` 和 `assessment`。语义核验另有 `check_attempt/context_digest`；正常 assessment 为 `{decision: accept|conflict|uncertain, reason, scope: {self_owned, public_only}, findings: [{category, reason, evidence_ids}]}`，scope 两项必须为布尔值。category 为 `spacetime|existence|capability|knowledge|causality|evidence`。引用的既有依据快照在 `cited_evidence` 中，仍为未压缩原文；核验失败记录 `decision=error/error_type`，另有各最多 600 字符的 `response_excerpt/diagnostic`，检查传输异常对外失败消息不回显私有检查上下文。结构拒绝仍使用 v3 协议，不包含语义检查统计。
+
+v4 的 `evidence_metrics` 只保存数值和分类：`evidence_count/aliases/prompt_chars/estimated_input_tokens/unprojected_input_tokens`，以及 `blocks` 下的 `stable_evidence/current_state/accepted_history/actor_input/candidate/envelope/system/protocol_recovery` 字符数与估算 Token。估算器是 CJK 字符加非 CJK 字符约四分之一，不是供应商 tokenizer。未压缩基准使用同一检查规则、原始重复证据和旧式 JSON 空格；协议重核验附加文本同时计入两侧。`provider_usage` 只摘录供应商实际返回的非负整数用量及缓存计数，不保存原始响应。预发送拒绝、预算阻断或网络异常也可能有准备输入的统计，不能将事件条数或估算数当作已计费请求；物理尝试仍由 Eval 共享预算记录。
+
+检查请求按固定规则、完整稳定证据、当前状态/历史、角色实际输入、候选行动组织。仅精确重复且能节省空间的值使用行级 `refs: [{path, source, source_path}]`，将该行 value 对应的 null 还原为此前证据 value 的原值；空路径表示整个 value。只认程序生成的行级 refs，value 内同名用户字段仍是普通数据；引用有向无环，不跨请求、不改变原始证据 ID。所有启用背景条目、其他角色约束、私有审计状态、未编码行动和旧的实际送达消息均保留，不做关键词相关性裁剪、语义摘要或风险跳过。
 
 角色输出先经过 `action_output.ParticipantAction` 结构校验。必需 `participation: act|observe|wait` 和字符串 `action`，act 时不能为空；`intent/observation/self_update/turn_delta/shared_effect_claim` 可省略，存在时必须为字符串。`episode_signal` 为 `continue|ready`，可选 `result` 为布尔值；不再根据旧别名补齐角色意图，也不把任意 `state_updates` 交给状态系统。坏 JSON、非对象、重复键、非有限数字及内置模型的 mock/截断响应不能回退成可读行动。允许 JSON 代码围栏。
 
@@ -225,8 +231,14 @@ Checker 的既有证据列表保留 `dynamic.*` 当前记录和 `actor.input` �
 
 ### 自动解析的失败协议
 
-`POST /api/templates/compile` 成功响应新增 `generation: {attempts, recovered_errors}`。只在模型给出有效 goal 与具名 roles 后构建工作流；不再因网络、截断或 JSON 错误返回启发式成功草案。
+`POST /api/templates/compile` 成功响应提供 `generation: {attempts, recovered_errors, format: compact|core, output_limit}`。只在模型给出有效 goal 与具名 roles 后构建工作流；不再因网络、截断或 JSON 错误返回启发式成功草案。
 
 失败返回 HTTP 502，`detail` 为 `{code, message, diagnostics}`。code 包括 `network_error/timeout/http_error/model_not_configured/output_truncated/invalid_json/invalid_plan_schema`。结构失败 diagnostics 保留每次 attempt、finish_reason 和 response_chars；供应商错误保留 provider_status 与 retryable，不向网页回显原始模型正文、Key 或请求头。网页 ApiError 保留这些字段，但只显示 message。预算异常继续向调用者传播，不伪装成可修复的 JSON 失败。
 
 格式/截断最多重新生成一次，传输重试由 Provider 负责；真实 Eval 的传输重试在预算层执行并逐次计数，不能无限重试或自动放宽额度。
+
+规划模型只返回语义核心：模式、目标、角色自身利益/任务及必要认知边界、公共初始状态、完成条件、表达形式和简短约束。显式 roleplay/custom 不要求调研字段；research/auto 仅在实际研究时可补充一个简短 research 对象。Python 负责补节点/边/ID、默认语言、默认数量、标准运行契约及 DTO 外壳，不编造缺失角色或事件。
+
+首次失败后用独立的 core 提示词替换请求：删除环境/假设等可选部分和通用长说明，角色仅要求身份、目标、实体类型，必要的私有认知/边界仍可保留；不把失败正文或完整旧 Schema 附回重试。原始 plan_text 与证据完整保留在两种提示词中。编译后原文逐字存入 `environment.context_book.entries[id=source_plan]`：私有、面向 director_1、priority=0、always=false，不消耗普通背景激活预算，不广播给角色；Checker 沿用其完整启用背景证据读取此条。表达与公共背景使用提取结果，不再把原文前220/500字符作为共享语境冒充完整计划。
+
+后端 `AUV_PLANNING_OUTPUT_TOKENS` 默认2400（512–4000），核心恢复最多1600；与节点输出限额独立。Provider 使用局部副本设置该次额度，不修改共享模型配置。Eval 可用 `--planning-output-tokens` 指定规划额度，但所有阶段、恢复和物理请求仍共享原总调用/Token/估算费用上限；没有新增前端配置项或自动加钱逻辑。

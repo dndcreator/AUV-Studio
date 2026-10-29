@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db import Base
 from app.evaluation.budget import BudgetedProvider, EvalBudget
 from app.evaluation.quality import evaluate_run
-from app.execution.action_consistency import ActionConsistencyError, admit_action, build_consistency_evidence, parse_assessment
+from app.execution.action_consistency import admit_action, build_consistency_evidence
 from app.execution.dynamic_state import state_coder_audit_clause
 from app.execution.completion import goal_completed
 from app.execution.engine import WorkflowEngine
@@ -128,14 +128,6 @@ def test_audit_and_coder_share_one_action_body_with_exact_references():
     prompt += state_coder_audit_clause(actions, actions_in_audit=True)
     assert prompt.count("UNIQUE_ACTION_BODY") == 1
     assert '"event_seq": 12' in prompt.split("UNCODED ACTION REFS", 1)[1]
-
-
-@pytest.mark.parametrize("scope", [None, {"self_owned": "true", "public_only": True},
-                                  {"self_owned": False, "public_only": True},
-                                  {"self_owned": True, "public_only": False}])
-def test_accept_cannot_omit_or_contradict_scope_checks(scope):
-    with pytest.raises(ActionConsistencyError):
-        parse_assessment(json.dumps({**ACCEPT, "scope": scope}), [])
 
 
 def test_scope_conflict_rewrites_only_the_owner_and_never_publishes_the_rejected_text():

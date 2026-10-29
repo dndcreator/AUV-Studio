@@ -52,6 +52,9 @@
 - `execution/checkpoints.py`：节点上下文快照、连续模拟检查点和回滚恢复。
 - `execution/director_policy.py`：确认策略、质量评估、纠偏文本、重大决策识别和投票解析；不访问数据库或 Provider。
 - `execution/scene_control.py`：Scene Contract 规范化、导演审计提示和按完整轮次计数的停滞控制；不访问数据库或 Provider。
+- `execution/action_evidence.py`：检查证据投影、精确值引用去重、稳定前缀与输入分块估算；不访问数据库或 Provider，不做语义相关性裁剪。`action_consistency.py` 负责结构接纳后的六类语义核验、有限修正和审计记录。
+- `evaluation/diagnostics.py`：从既有事件汇总检查分块用量和紧凑的逐轮进展，不复制提示词、私有正文或建立第二条时间线。
+- 测试/评测层：`scripts/verify.py` 统一离线工程门禁；pytest显式分层并隔离用户数据、禁止真实HTTP。`behavior_eval.py` 使用现有模块入口、共享BudgetedProvider与独立Judge，`evaluation/targets.py` 装配目标，`judging.py` 固定判据，`benchmarks.py/acceptance.py` 管理校准、基线和质量状态。均不加入产品正常运行循环，详见 `docs/TESTING.md`。
 - 审计同时读取最小角色职责表与收件证据，不再只看连线/叙述推断知情。职责匹配和完成条件仍由模型判断，不新增领域关键词规则；仅要求提案的任务不应被扩张成执行和回执。
 - `execution/simulation_state.py`：无副作用的模拟状态初始化与转换。
 - `execution/context_book.py`：场景级背景激活、预算裁剪、节点知识隔离和激活追踪。
@@ -174,6 +177,7 @@ AUV continuous execution is mode-neutral. Roleplay scenes, research stages, cons
 3. Each turn reports a possibly empty `turn_delta` claim. Actual actions remain the evidence; Delta does not become a durable fact or a separate timeline.
 4. During the existing boundary audit, a separate State Coder output dynamically creates, updates, or retires only concepts that can constrain future behavior.
 5. Director manages a Scene Contract (`goal`, `pacing`, `detail`, `progress_scale`, `exit_conditions`) and audits episode boundaries. It returns `continue`, `transition`, or `stop`, and a semantic progress judgment for each completed global round. Runtime counts consecutive stagnant rounds; two rounds trigger consideration of pacing changes or closure without forcing character actions.
+   Goal progress is assessed independently as advanced/none/regressed/uncertain against the contracted exit conditions and progress_scale. Runtime exposes generic refocus/reassess/consider_stop feedback after two/four/six consecutive none/regressed rounds to the router, participants and the existing audit. Missing, uncertain or duplicated assessments cannot prove progress or a stagnation streak. Micro progress can coexist with slow pacing and high detail. Feedback never selects actor outcomes, creates deadlines or forces completion; an incomplete stop remains incomplete.
 6. Every accepted domain state value cites a concrete node action and event. Dynamic State remains the sole domain authority. `_scene_control` contains only runtime control metadata; checkpoints separately restore its contract, stagnation counter, and audit cursor alongside Dynamic State and action cursors. Audited boundaries are rollback-capable.
 
 `execution/completion.py` 统一执行器和评测的目标完成判据，不把 stop 或达到上限当作完成。Director 报告 task_complete/completion_reason；无法确认目标完成则保留结果并 stopped。completion 属于运行结果，不是第二套领域状态。节点与审计获得剩余执行额度，不能借此替参与者指定结局。Scene Contract 缺失控制项时采用中性 meso，明确的 micro 与高细节仍保留。
@@ -204,16 +208,25 @@ Scene setup is returned in the initial existing routing call, and progress check
 
 - 固定六类检查原则：时空、实体存在/当前状态、能力/资源/权限、知识与通信边界、因果与结果归属、既定设定/研究证据。具体规则来自用户设定和实际状态，不写领域词表、物理引擎或人物性格评分，不做内容分级。
 - 检查器读取初始环境、完整启用背景条目、实体定义、当前世界坐标、含私有内容的 Dynamic State、最近12条与全部未编码公开行动的去重并集，以及行动者实际获得的 context/role。state.coding 明确标记当前状态与待编码增量，不截掉较早的待编码事件。规则不受背景激活关键词和正文预算影响；背景 belief/rumor/assumption 必须保留其不确定性。已编码的旧事实仍需由已有状态/记忆机制保留，检查不是无限历史检索保证。
+- 发送端将稳定证据放在前面，候选行动放在最后；仅用指向此前证据值的精确 refs 去重，不抽取关键句、删去未激活规则或隐藏其他实体限制。角色实际输入的引用与 visible_dynamic_ids 仍单独表示其知情边界，不因审计器看到更多原文就扩大角色权限。原始证据保留用于引用核验和 cited_evidence；线上的精确投影及别名理解仍需真实模型复测，不由 JSON 可还原性推出语义准确率。
+- `action_checked` v4 记录分组字符数/估算 Token 和供应商返回的数值用量。协议重核验重新计算实际提示指纹和新增开销；统计不含原文，也不改变统一预算。稳定前缀仅创造服务端缓存的条件，不保证缓存命中或40%-60%的真实节省。没有引入轻量模型、风险分类服务或免检自然语言通道。
 - 检查器是有权审计私有材料的模型调用，沿用平台 Provider/default model；不会把完整检查上下文发给其他角色或外接 Agent。传输配置不进入证据投影。模型输出 `accept/conflict/uncertain`，非接受判断必须引用实际证据 ID；代码强制验证格式/引用存在性，但不声称证明引用的语义正确。
 - 尝试、提议、说谎和误解本身可以是有效行动；不能自动等同于成功、他人同意或验证过的研究结论。已建立的例外可以改变有效行动范围。未知细节不自动构成冲突；实质性结果缺少必要依据时不把它接纳为已发生事实。
 - 内置 LLM 节点最多重新生成一次并重新检查；修正通知是固定通用文本，不复制审查者看到的秘密或理由。外接 Agent 不自动重发。仍冲突/不确定、无效检查输出、超时或预算异常时停止为可检查的失败，保留先前行动和权威状态，不自动放行、改写角色行动或无限重试。
 - 每次检查写入已有 `run_events` 的 `action_checked`，保留候选、判断、所引证据快照和检查输入摘要指纹；成功事件通过 trace parent 指向对应检查。候选不是有效行动或新的回滚检查点。原始技术证据可由本地用户在 Events/Trace/Full Log 查看；Live、可读过程与报告素材只使用已接纳输出。
 - 状态消费端保留 evidence_kind/source_refs/confidence；通用节点不再把缺少认识论标记的值渲染成 Authoritative Dynamic State。State Coder 仍复用现有 Director 审计，没有新增核实服务或状态层。
 - 每个候选增加一次逻辑模型调用；一次修正另增一次角色调用和一次检查，Provider 原有有限传输重试策略不变。Eval 的统一调用/Token/费用估算预算覆盖这些调用，不自动增加预算。检查 JSON 输入超过 `AUV_ACTION_CHECK_MAX_CHARS`（默认 64000）时明确失败，不静默裁掉规则；这是工程字符限额，不是供应商上下文容量或账单保证。
+- 目标进展判断复用既有边界审计，无独立评审调用。默认逐轮审计的调用次数不变；非默认低频审计在已观测到连续缺少目标进展后可能提前下一次边界审计，仍受相同预算限制。`goal_stagnation` 是可回滚的 `_scene_control` 运行元数据，不属于 State Coder 的长期事实。
 
 这道门减少矛盾的提前传播，不能保证模型永不误判或漏判。大规模场景的检查上下文、逐候选调用成本和真实模型语义效果仍需单独验收。
 
 ### 计划解析错误与重试
+
+`plan_prompt.py` 生成按显式模式收束的紧凑语义请求，并把语义核心补成既有编译 DTO。roleplay/custom 不要求调研设计，auto/research 的研究信息只在适用时可选；模型负责目标、角色利益/认知边界、初始局面、完成条件及表达要求。ID、默认数量/语言、节点连接、标准结构由程序生成。截断/格式失败使用另一份真正更小的 core 请求，不再给完整旧 Schema 追加一句“简短一点”。
+
+原始请求逐字归档为已有 Context Book 中的私有 source_plan 条目，不直接进入角色共享语境，也不参与普通激活预算；一致性审计仍可读取完整原文。公共环境与角色私有认知由提取结果分别承载，普通节点不自动获得导演持有的全部原始材料。没有新增世界模型、状态存储或内容限制。
+
+规划输出额度独立于角色输出：平台默认2400，core 恢复最多1600。OpenAI-compatible/Ollama Provider 的 with_output_limit 返回局部副本，避免并发编译修改共享限额；BudgetedProvider 的阶段副本共享同一 usage/retries/category 账本，只改变该请求输出预留，总预算不变。
 
 `plan_generation.py` 负责结构化计划的解析、最小参与者结构验证及有界重新生成，`plan_compiler.py` 只做模式/工作流构建。网页 `/api/templates/compile` 和后端真实验收调用同一个编译函数，不存在“后端测试专用”的草案生成逻辑。
 

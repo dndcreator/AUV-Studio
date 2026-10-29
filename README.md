@@ -131,4 +131,6 @@ $env:AUV_VIDEO_API_KEY="your_video_key"
 - [媒体 Provider 协议](./docs/MEDIA_PROVIDER_PROTOCOL.md)
 - [图片与视频模型接入指南](./docs/MEDIA_SETUP_GUIDE.md)
 - [真实模型效果评测](./docs/EVALUATION_GUIDE.md)
+- [分层测试与评测执行](./docs/TESTING.md)
+- [测试资产审计与覆盖矩阵](./docs/TEST_AUDIT.md)
 - [变更记录](./docs/CHANGELOG.md)

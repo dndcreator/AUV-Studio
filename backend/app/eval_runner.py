@@ -15,7 +15,10 @@ from sqlalchemy.orm import sessionmaker
 
 from .db import Base, SessionLocal
 from .evaluation.budget import BudgetedProvider, EvalBudget
-from .evaluation.quality import evaluate_run, judge_run
+from .evaluation.diagnostics import check_context_summary, round_audit_summary
+from .evaluation.acceptance import acceptance, acceptance_exit, fingerprint
+from .evaluation.judging import build_judge_provider, judge_evidence, JUDGE_SYSTEM, RUBRICS
+from .evaluation.quality import evaluate_run
 from .evaluation.scenario import list_scenarios, load_scenario
 from .evaluation.writing import benchmark_identity, generate_sample, judge_samples, load_styles
 from .execution.engine import WorkflowEngine
@@ -41,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-calls", type=int, default=12)
     parser.add_argument("--max-total-tokens", type=int, default=26_000)
     parser.add_argument("--max-output-tokens", type=int, default=600)
+    parser.add_argument("--planning-output-tokens", type=int, default=2400, help="Independent planning output ceiling; same total budget")
     parser.add_argument("--max-cost-usd", type=float, default=0.10)
     parser.add_argument("--input-usd-per-million", type=float, default=1.00)
     parser.add_argument("--output-usd-per-million", type=float, default=4.00)
@@ -68,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Scenario: {scenario.get('title', args.scenario)}")
     print(f"Expected calls: about {estimated_calls}; hard limit: {budget.max_calls}")
     print(f"Token hard limit: {budget.max_total_tokens}; output/call: {budget.max_output_tokens_per_call}")
+    print(f"Planning output/call: {budget.planning_output_tokens}; core recovery: at most {min(budget.planning_output_tokens, 1600)}")
     print(f"Cost hard limit: ${budget.max_cost_usd:.2f} (using the supplied price assumptions)")
     print("Billing note: the USD limit is an estimate; call and token limits are the enforceable safeguards.")
     if check_calls:
@@ -102,9 +107,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Calls: {artifact['usage']['calls']}; estimated tokens: {artifact['usage']['input_tokens'] + artifact['usage']['output_tokens']}")
     print(f"Estimated cost: ${artifact['usage']['estimated_cost_usd']:.6f}")
     print(f"Review: {result_path}")
-    return 0 if (artifact["run"]["status"] == "succeeded" and result_status == "succeeded"
-                 and not any(item.get("error") for item in artifact.get("narratives", []))
-                 and (not behavior or behavior["status"] not in {"fail", "inconclusive"})) else 1
+    print(f"Acceptance: {acceptance(artifact)['overall']} (execution and semantic quality are separate)")
+    return acceptance_exit(artifact)
 
 
 def _build_budget(args: argparse.Namespace) -> EvalBudget:
@@ -114,6 +118,8 @@ def _build_budget(args: argparse.Namespace) -> EvalBudget:
         raise ValueError("max-total-tokens must be between 1000 and 100000")
     if not 64 <= args.max_output_tokens <= 4_000:
         raise ValueError("max-output-tokens must be between 64 and 4000")
+    if not 512 <= args.planning_output_tokens <= 4_000:
+        raise ValueError("planning-output-tokens must be between 512 and 4000")
     if not 0.01 <= args.max_cost_usd <= 5.0:
         raise ValueError("max-cost-usd must be between 0.01 and 5.00")
     if args.input_usd_per_million < 0 or args.output_usd_per_million < 0:
@@ -125,6 +131,7 @@ def _build_budget(args: argparse.Namespace) -> EvalBudget:
         max_cost_usd=args.max_cost_usd,
         input_usd_per_million=args.input_usd_per_million,
         output_usd_per_million=args.output_usd_per_million,
+        planning_output_tokens=args.planning_output_tokens,
     )
 
 
@@ -150,9 +157,10 @@ async def _execute(
         provider.thinking_mode = "disabled"
 
     limited_provider = BudgetedProvider(provider, budget, retry_count=1)
+    judge_provider = limited_provider.with_provider(build_judge_provider()) if use_judge else None
     profiles = load_styles(styles or scenario.get("styles", []))
     if scenario.get("writing_source"):
-        return await _execute_writing(scenario_name, scenario, limited_provider, budget, use_judge, profiles)
+        return await _execute_writing(scenario_name, scenario, limited_provider, budget, use_judge, profiles, judge_provider=judge_provider)
     generation = None
     if scenario.get("plan_text"):
         try:
@@ -219,7 +227,13 @@ async def _execute(
                     samples.append({"style": profile["id"], "error": str(exc)})
                     break
         previous = _latest_result(scenario_name)
-        comparison = _compare_previous(previous, deterministic, limited_provider.usage.input_tokens + limited_provider.usage.output_tokens)
+        benchmark = {"version": 1, "case_hash": fingerprint(scenario), "profiles_hash": fingerprint(profiles),
+                     "model": {"provider": provider.provider_kind, "endpoint": _safe_base_url(provider.base_url),
+                               "name": provider.default_model, "thinking_mode": getattr(provider, "thinking_mode", None)},
+                     "budget": asdict(budget), "judge_contract": fingerprint({"system": JUDGE_SYSTEM, "rubrics": RUBRICS}),
+                     "judge_model": ({"name": judge_provider.provider.default_model,
+                                       "endpoint": _safe_base_url(judge_provider.provider.base_url)} if judge_provider else None)}
+        comparison = _compare_previous(previous, deterministic, limited_provider.usage.input_tokens + limited_provider.usage.output_tokens, benchmark)
         artifact = {
             "schema_version": 2,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -241,11 +255,14 @@ async def _execute(
             "final_text": str(detail.output.get("final", {}).get("content", "")),
             "narratives": samples,
             "comparison": comparison,
+            "benchmark": benchmark,
             "compilation": generation,
             "transport_retries": limited_provider.retries,
             "completion": detail.output.get("completion"),
             "diagnostics": {
                 "usage_by_kind": limited_provider.usage_by_kind,
+                "action_check_context": check_context_summary(events.events),
+                "round_audits": round_audit_summary(events.events),
                 "initial_phase": (workflow.environment.simulation.get("phases") or [{}])[0],
                 "coordinates": {"time": workflow.environment.time_context, "location": workflow.environment.spatial_context},
                 "last_audits": [{key: event.payload.get(key) for key in
@@ -269,9 +286,14 @@ async def _execute(
             try:
                 if profiles:
                     source = "\n".join(item["action"] for item in deterministic["actions"])
-                    artifact["llm_judge"] = await judge_samples(limited_provider, source, samples, profiles)
+                    artifact["llm_judge"] = await judge_samples(judge_provider, source, samples, profiles)
                 else:
-                    artifact["llm_judge"] = await judge_run(limited_provider, scenario.get("rubric", {}), _review_markdown(artifact))
+                    artifact["llm_judge"] = await judge_evidence(judge_provider, "system", {
+                        "task": scenario.get("plan_text") or scenario.get("input", {}),
+                        "accepted_actions": detail.output.get("actions", deterministic["actions"]),
+                        "state": detail.output.get("simulation", {}), "completion": detail.output.get("completion", {}),
+                        "audits": round_audit_summary(events.events),
+                    }, json.dumps(scenario.get("rubric", {}), ensure_ascii=False))
             except Exception as exc:  # noqa: BLE001
                 artifact["llm_judge"] = {"error": str(exc)}
         artifact["usage"] = limited_provider.usage.model_dump(budget)
@@ -285,7 +307,10 @@ async def _execute(
 async def _execute_writing(
     name: str, scenario: dict[str, Any], provider: BudgetedProvider, budget: EvalBudget,
     use_judge: bool, profiles: list[dict[str, Any]],
+    *, judge_provider: BudgetedProvider | None = None,
 ) -> tuple[dict[str, Any], Path]:
+    if use_judge and judge_provider is None:
+        judge_provider = provider.with_provider(build_judge_provider())
     source = scenario["writing_source"]
     samples = []
     error = None
@@ -305,10 +330,10 @@ async def _execute_writing(
         "benchmark": {
             **benchmark_identity(source, profiles),
             "judge_model": {
-                "name": provider.provider.default_model,
-                "provider": getattr(provider.provider, "provider_kind", ""),
-                "endpoint": _safe_base_url(getattr(provider.provider, "base_url", "")),
-                "thinking_mode": getattr(provider.provider, "thinking_mode", None),
+                "name": judge_provider.provider.default_model if judge_provider else None,
+                "provider": getattr(judge_provider.provider, "provider_kind", "") if judge_provider else None,
+                "endpoint": _safe_base_url(getattr(judge_provider.provider, "base_url", "")) if judge_provider else None,
+                "thinking_mode": getattr(judge_provider.provider, "thinking_mode", None) if judge_provider else None,
             },
         },
         "narratives": samples, "llm_judge": None,
@@ -317,7 +342,7 @@ async def _execute_writing(
     }
     if use_judge and complete:
         try:
-            artifact["llm_judge"] = await judge_samples(provider, source, samples, profiles)
+            artifact["llm_judge"] = await judge_samples(judge_provider, source, samples, profiles)
         except Exception as exc:  # noqa: BLE001
             artifact["llm_judge"] = {"error": str(exc)}
     artifact["usage"] = provider.usage.model_dump(budget)
@@ -328,6 +353,9 @@ async def _execute_writing(
 
 
 def _save_result(name: str, artifact: dict[str, Any]) -> Path:
+    if artifact.get("llm_judge"):
+        artifact.setdefault("judge_calibration", "not_calibrated")
+    artifact["acceptance"] = acceptance(artifact)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     path = RESULTS_DIR / f"{name}.md"
     path.write_text(_review_markdown(artifact), encoding="utf-8")
@@ -346,15 +374,17 @@ def _latest_result(scenario_name: str) -> dict[str, Any] | None:
         return None
 
 
-def _compare_previous(previous: dict[str, Any] | None, current: dict[str, Any], current_tokens: int) -> dict[str, Any]:
+def _compare_previous(previous: dict[str, Any] | None, current: dict[str, Any], current_tokens: int,
+                      benchmark: dict[str, Any] | None = None) -> dict[str, Any]:
     if not previous:
         return {"verdict": "first_run", "score_delta": None, "token_delta": None}
+    if not benchmark or previous.get("benchmark") != benchmark:
+        return {"verdict": "incomparable", "score_delta": None, "token_delta": None}
     old_score = float(previous.get("deterministic_evaluation", {}).get("score", 0))
     old_usage = previous.get("usage", {})
     old_tokens = int(old_usage.get("input_tokens", 0)) + int(old_usage.get("output_tokens", 0))
     delta = round(float(current.get("score", 0)) - old_score, 1)
-    verdict = "improved" if delta >= 5 else "regressed" if delta <= -5 else "stable"
-    return {"verdict": verdict, "score_delta": delta, "token_delta": current_tokens - old_tokens}
+    return {"verdict": "single_sample_only", "score_delta": delta, "token_delta": current_tokens - old_tokens}
 
 
 def _validate_scenario_safety(workflow: Any) -> None:
@@ -390,6 +420,8 @@ def _review_markdown(artifact: dict[str, Any]) -> str:
         "run": artifact["run"],
         "result_status": artifact.get("result_status", artifact["run"]["status"]),
         "manual_review": artifact.get("manual_review"),
+        "acceptance": acceptance(artifact),
+        "judge_calibration": artifact.get("judge_calibration"),
         "completion": artifact.get("completion"),
         "diagnostics": artifact.get("diagnostics"),
         "usage": usage,
@@ -423,6 +455,16 @@ def _review_markdown(artifact: dict[str, Any]) -> str:
     consistency = artifact.get("consistency", {})
     if consistency:
         lines.extend(["## Action Checks", "", f"{consistency['checked']} checked candidates; rejected/uncertain candidates below did not occur.", ""])
+        context = artifact.get("diagnostics", {}).get("action_check_context", {})
+        if context.get("measured_checks"):
+            lines.extend([f"Input estimate: {context['estimated_input_tokens']} tokens; unprojected estimate: "
+                          f"{context['unprojected_input_tokens']}; exact aliases: {context['aliases']}.", ""])
+    audits = artifact.get("diagnostics", {}).get("round_audits", [])
+    if audits:
+        lines.extend(["Goal audits: " + "; ".join(
+            f"round {row['round']} {row['decision']}, no-goal-progress streak={row['goal_stagnation']}, "
+            f"unassessed={row['unassessed_goal_rounds']}" for row in audits), ""])
+    if consistency:
         for row in consistency["not_accepted"]:
             assessment = row["assessment"]
             lines.extend([f"- {row['node']} attempt {row['attempt']}: {assessment.get('decision')} "

@@ -81,7 +81,7 @@ def test_aborted_long_run_is_not_a_completed_long_horizon_validation():
     assert result["state_snapshot"] == {"available": True, "run_complete": False}
 
 
-@pytest.mark.parametrize("status,code", [("fail", 1), ("inconclusive", 1), ("review_required", 0)])
+@pytest.mark.parametrize("status,code", [("fail", 1), ("inconclusive", 3), ("review_required", 3)])
 def test_cli_does_not_treat_missing_coverage_as_success(monkeypatch, status, code):
     async def execute(*_args):
         return {"run": {"status": "succeeded"}, "deterministic_evaluation": {"score": 100,

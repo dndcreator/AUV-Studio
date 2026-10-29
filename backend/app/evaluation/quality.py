@@ -63,6 +63,11 @@ def evaluate_run(
             bool(item.get("progress_assessment", {}).get("round_progress"))
             and not item["progress_assessment"].get("unassessed_rounds") for item in audits
         )
+        checks["director_assesses_goal_progress"] = bool(audits) and all(
+            bool(item.get("progress_assessment", {}).get("round_progress"))
+            and "unassessed_goal_rounds" in item.get("progress_assessment", {})
+            and not item["progress_assessment"]["unassessed_goal_rounds"] for item in audits
+        )
     dynamic_expected = expected.get("dynamic_state", {})
     dynamic_stats: dict[str, Any] = {}
     if isinstance(dynamic_expected, dict) and dynamic_expected:
@@ -139,6 +144,7 @@ def evaluate_run(
         "scene_contract_reaches_each_turn": "At least one actor turn lacked a Scene Contract.",
         "turn_delta_is_available": "At least one actor turn lacked the Turn Delta field.",
         "director_assesses_each_round": "The Director omitted at least one completed round from the progress audit.",
+        "director_assesses_goal_progress": "The Director omitted or could not assess goal progress for at least one completed round.",
     }.items():
         if checks.get(key) is False:
             findings.append(message)
@@ -159,42 +165,5 @@ def evaluate_run(
     }
 
 
-async def judge_run(provider: Any, rubric: dict[str, Any], record: str) -> dict[str, Any]:
-    prompt = (
-        "Evaluate this fixed multi-agent simulation. Return JSON only with keys: "
-        "verdict (pass|mixed|fail), overall_score (0-100), problems (up to 3 brief items), "
-        "recommendation (one sentence). "
-        "Do not reward verbosity or fluent repetition. Judge progress relative to the stated scene goals: micro changes "
-        "and justified waiting can be appropriate, without forced conflict or dramatic escalation. Check that reported "
-        "actions remain role-consistent. If literary samples are present, judge whether each reads as a finished work "
-        "rather than a report, follows its requested style and form, differs meaningfully from the other styles, and "
-        "preserves the observed outcomes. Do not claim to verify hidden state or private context absent from this record.\n\n"
-        f"RUBRIC:\n{json.dumps(rubric, ensure_ascii=False)}\n\nTEST RECORD:\n{record}"
-    )
-    response = await provider.chat(
-        model="",
-        system_prompt="You are a strict regression evaluator for a distributed multi-agent simulation engine.",
-        user_prompt=prompt,
-    )
-    return _extract_json(str(response.get("content", "")))
-
-
 def _normalize(value: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^\w\u4e00-\u9fff]+", " ", value.lower())).strip()
-
-
-def _extract_json(raw: str) -> dict[str, Any]:
-    candidate = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    try:
-        value = json.loads(candidate)
-        return value if isinstance(value, dict) else {"error": "judge returned non-object JSON", "raw": raw[:2000]}
-    except Exception:  # noqa: BLE001
-        match = re.search(r"\{[\s\S]*\}", candidate)
-        if match:
-            try:
-                value = json.loads(match.group(0))
-                if isinstance(value, dict):
-                    return value
-            except Exception:  # noqa: BLE001
-                pass
-    return {"error": "judge returned invalid JSON", "raw": raw[:2000]}
