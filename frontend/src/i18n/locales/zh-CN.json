@@ -1,5 +1,29 @@
 {
   "subtitle": "可视化多智能体模拟器",
+  "journey": {
+    "applyEdit": "应用并编辑",
+    "home": "首页", "workspaceView": "工作区视图", "scene": "场景", "editor": "编辑器",
+    "projects": "项目", "settings": "设置", "whatToSimulate": "你想模拟什么？",
+    "prompt": "模拟需求", "promptPlaceholder": "描述一个场景、问题，或者你想创造的世界……",
+    "uploadPlan": "上传计划", "preparing": "正在安排场景……", "generate": "生成场景",
+    "resume": "返回工作区", "manual": "手动搭建", "recentProjects": "最近项目",
+    "loading": "正在加载……", "noProjects": "还没有保存的项目", "directorMessage": "与导演交流",
+    "intervenePlaceholder": "向导演发出指令……", "adjustPlaceholder": "描述你想调整的内容……",
+    "send": "发送", "refreshPlan": "更新方案", "confirmStart": "确认并开始", "start": "开始模拟",
+    "results": "结果", "participant": "角色", "draft": "确认场景", "eventTrail": "事件轨迹",
+    "closeDetails": "关闭详情", "role": "角色设定", "objective": "目标", "moreConfiguration": "高级配置",
+    "mode": "模式", "method": "研究方式", "participants": "{{count}} 个参与者", "awaitingAction": "等待下一步行动……",
+    "discard": "放弃草案", "fullScene": "全量实况", "yourDecision": "等待你的决定", "confirmContinue": "确认并继续",
+    "draftReady": "草案", "live": "进行中", "ready": "就绪", "reviewFirst": "请先确认或放弃草案，再打开编辑器。",
+    "emptyScene": "还没有参与者",
+    "research": { "simulation": "情景模拟", "research": "模拟调研", "consulting": "咨询" },
+    "entity": { "individual": "个体", "group": "群体", "organization": "组织", "environment": "环境", "event": "事件", "artifact": "物体", "agent": "智能体", "external_agent": "外接智能体", "human_checkpoint": "用户" },
+    "examples": {
+      "business": { "label": "商业决策", "prompt": "模拟一个小团队决定是否推出新产品，各成员有不同利益，现有证据并不充分。" },
+      "world": { "label": "世界演化", "prompt": "模拟一艘生命维持系统出现故障的飞船，船员依据各自的认知与职责自主行动。" },
+      "characters": { "label": "角色互动", "prompt": "模拟一名新手冒险家来到西方奇幻世界的冒险者公会，选择他的第一项任务。" }
+    }
+  },
   "studio": {
     "language": "语言",
     "projectActions": "项目操作",

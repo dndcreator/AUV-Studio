@@ -1,6 +1,7 @@
 import type { Lang } from "../appTypes";
 import type { WorkflowSummary } from "../types";
 import { StudioIcon } from "./StudioIcon";
+import { ModalFrame } from "./PanelFrame";
 
 type Props = {
   open: boolean;
@@ -18,15 +19,7 @@ export function ProjectLibraryModal(props: Props) {
   if (!props.open) return null;
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={props.onClose}>
-      <div className="modal-card project-library-card" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-head">
-          <div>
-            <span className="result-kicker">PROJECT LIBRARY</span>
-            <h2>{props.copy("打开项目", "Open Project")}</h2>
-          </div>
-          <button className="btn" onClick={props.onClose}>{props.copy("关闭", "Close")}</button>
-        </div>
+    <ModalFrame className="project-library-card" kicker="PROJECT LIBRARY" title={props.copy("打开项目", "Open Project")} closeLabel={props.copy("关闭", "Close")} onClose={props.onClose}>
         <div className="project-search-field">
           <StudioIcon name="search" />
           <input
@@ -53,7 +46,6 @@ export function ProjectLibraryModal(props: Props) {
             </button>
           ))}
         </div>
-      </div>
-    </div>
+    </ModalFrame>
   );
 }

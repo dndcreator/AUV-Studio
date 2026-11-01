@@ -1,5 +1,29 @@
 {
   "subtitle": "Visual Multi-Agent Simulation",
+  "journey": {
+    "applyEdit": "Apply & open editor",
+    "home": "Home", "workspaceView": "Workspace view", "scene": "Scene", "editor": "Editor",
+    "projects": "Projects", "settings": "Settings", "whatToSimulate": "What would you like to simulate?",
+    "prompt": "Simulation request", "promptPlaceholder": "A situation, a question, or a world you want to create…",
+    "uploadPlan": "Upload plan", "preparing": "Preparing your scene…", "generate": "Create scene",
+    "resume": "Return to workspace", "manual": "Build manually", "recentProjects": "Recent projects",
+    "loading": "Loading…", "noProjects": "No saved projects yet", "directorMessage": "Message the Director",
+    "intervenePlaceholder": "Give the Director an instruction…", "adjustPlaceholder": "What would you like to adjust?",
+    "send": "Send", "refreshPlan": "Update plan", "confirmStart": "Confirm & start", "start": "Start simulation",
+    "results": "Results", "participant": "Participant", "draft": "Review scene", "eventTrail": "Event trail",
+    "closeDetails": "Close details", "role": "Role", "objective": "Objective", "moreConfiguration": "Advanced configuration",
+    "mode": "Mode", "method": "Method", "participants": "{{count}} participants", "awaitingAction": "Waiting for the next action…",
+    "discard": "Discard draft", "fullScene": "Full scene", "yourDecision": "Your decision", "confirmContinue": "Confirm & continue",
+    "draftReady": "DRAFT", "live": "LIVE", "ready": "READY", "reviewFirst": "Confirm or discard the draft before opening the editor.",
+    "emptyScene": "No participants yet",
+    "research": { "simulation": "Scenario simulation", "research": "Simulated research", "consulting": "Consulting" },
+    "entity": { "individual": "Individual", "group": "Group", "organization": "Organization", "environment": "Environment", "event": "Event", "artifact": "Artifact", "agent": "Agent", "external_agent": "External agent", "human_checkpoint": "Human" },
+    "examples": {
+      "business": { "label": "A business decision", "prompt": "Simulate a small team deciding whether to launch a new product, with different interests and uncertain evidence." },
+      "world": { "label": "A world in motion", "prompt": "Simulate a spacecraft crew facing a failing life-support system. Each person acts with their own knowledge and responsibilities." },
+      "characters": { "label": "Character interaction", "prompt": "Simulate a novice adventurer arriving at a fantasy guild and choosing their first assignment." }
+    }
+  },
   "studio": {
     "language": "Language",
     "projectActions": "Project actions",

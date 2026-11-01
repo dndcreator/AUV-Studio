@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from time import perf_counter
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -116,12 +117,15 @@ async def _check_candidate(
             record({**checked_record, "assessment": {"decision": "error", "error_type": type(error).__name__}, "diagnostic": str(error)})
             raise error
         content = ""
+        started = perf_counter()
         try:
             response = await provider.chat(model="", system_prompt=CHECK_SYSTEM_PROMPT, user_prompt=prompt)
             content = str(response.get("content", ""))
             checked_record["provider_usage"] = response_usage(response)
+            checked_record["duration_ms"] = round((perf_counter() - started) * 1000)
+            checked_record["metrics"] = response.get("metrics", {})
         except Exception as exc:
-            record({**checked_record,
+            record({**checked_record, "duration_ms": round((perf_counter() - started) * 1000),
                     "assessment": {"decision": "error", "error_type": type(exc).__name__}, "diagnostic": str(exc)[:600]})
             raise ActionConsistencyError(
                 f"Action consistency check failed ({type(exc).__name__}); candidate was not accepted. Inspect action_checked events."

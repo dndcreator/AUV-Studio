@@ -1,5 +1,6 @@
 import { isKeylessLocalModel, modelProviderPresets, normalizeModelProvider } from "../modelProviders";
 import type { ModelConfig, ModelConfigTestResponse, ModelProviderKind } from "../types";
+import { ModalFrame } from "./PanelFrame";
 
 type Props = {
   open: boolean;
@@ -26,12 +27,7 @@ export function ModelConfigModal(props: Props) {
   const preset = modelProviderPresets[props.provider];
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="modal-card model-config-card">
-        <div className="modal-head">
-          <h2>{props.copy("模型配置", "Model Setup")}</h2>
-          <button className="btn" onClick={props.onClose}>{props.copy("关闭", "Close")}</button>
-        </div>
+    <ModalFrame className="model-config-card" title={props.copy("模型配置", "Model Setup")} closeLabel={props.copy("关闭", "Close")} onClose={props.onClose}>
         <div className="config-grid">
           <label>
             {props.copy("接口类型", "Provider")}
@@ -90,7 +86,6 @@ export function ModelConfigModal(props: Props) {
             {props.saving ? props.copy("保存中...", "Saving...") : props.copy("保存", "Save")}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalFrame>
   );
 }

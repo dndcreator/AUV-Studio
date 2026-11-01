@@ -2,6 +2,7 @@ import type { ChangeEvent } from "react";
 import type { GlimpseRow } from "../glimpse";
 import type { EvidencePack, RunReport } from "../types";
 import { MediaStudio } from "./MediaStudio";
+import { ModalFrame } from "./PanelFrame";
 
 type Copy = (zh: string, en: string) => string;
 
@@ -24,14 +25,7 @@ export function EvidenceOverlay({ open, pending, evidence, copy, onFile, onUse, 
   };
 
   return (
-    <div className="modal-backdrop evidence-backdrop" role="dialog" aria-modal="true">
-      <div className="modal-card evidence-card">
-        <div className="modal-head">
-          <div>
-            <span className="result-kicker">RESEARCH EVIDENCE</span>
-            <h2>{copy("添加研究证据", "Add Research Evidence")}</h2>
-          </div>
-        </div>
+    <ModalFrame className="evidence-card" backdropClassName="evidence-backdrop" kicker="RESEARCH EVIDENCE" title={copy("添加研究证据", "Add Research Evidence")}>
         <label className="evidence-dropzone">
           <strong>{pending ? copy("正在本地解析...", "Parsing locally...") : copy("选择证据包或文件", "Choose evidence package or file")}</strong>
           <span>ZIP · XLSX · DOCX · CSV · JSON · TXT · MD</span>
@@ -60,8 +54,7 @@ export function EvidenceOverlay({ open, pending, evidence, copy, onFile, onUse, 
           </button>
           <button className="btn" onClick={onSkip}>{copy("暂不提供", "Continue Without Evidence")}</button>
         </div>
-      </div>
-    </div>
+    </ModalFrame>
   );
 }
 
@@ -76,12 +69,8 @@ type LiveTranscriptOverlayProps = {
 export function LiveTranscriptOverlay({ open, rows, finalText, copy, onClose }: LiveTranscriptOverlayProps) {
   if (!open) return null;
   return (
-    <div className="modal-backdrop live-transcript-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="modal-card live-transcript-card" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-head">
-          <div><h2>{copy("全量实况", "Full Live Scene")}</h2><span>{copy(`${rows.length} 条实际互动`, `${rows.length} actual interactions`)}</span></div>
-          <button className="btn" onClick={onClose}>{copy("关闭", "Close")}</button>
-        </div>
+    <ModalFrame className="live-transcript-card" backdropClassName="live-transcript-backdrop" title={copy("全量实况", "Full Live Scene")}
+      subtitle={copy(`${rows.length} 条实际互动`, `${rows.length} actual interactions`)} closeLabel={copy("关闭", "Close")} onClose={onClose}>
         <div className="live-transcript-list">
           <div className="live-transcript-section-title">{copy("实际互动", "Actual Interactions")}</div>
           {rows.length === 0 ? <div className="live-window-empty">{copy("模拟开始后，对白和行动会出现在这里。", "Dialogue and actions will appear here once the simulation starts.")}</div> : null}
@@ -101,8 +90,7 @@ export function LiveTranscriptOverlay({ open, rows, finalText, copy, onClose }: 
             </>
           ) : null}
         </div>
-      </div>
-    </div>
+    </ModalFrame>
   );
 }
 
@@ -116,6 +104,7 @@ type RunResultOverlayProps = {
   onClose: () => void;
   onOpenTranscript: () => void;
   onGenerateReport: (mode: "briefing" | "narrative") => void;
+  onSceneBackground?: (url: string) => void;
 };
 
 export function RunResultOverlay({
@@ -128,15 +117,12 @@ export function RunResultOverlay({
   onClose,
   onOpenTranscript,
   onGenerateReport,
+  onSceneBackground,
 }: RunResultOverlayProps) {
   if (!open) return null;
   return (
-    <div className="modal-backdrop result-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="modal-card run-result-card" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-head">
-          <div><span className="result-kicker">SIMULATION COMPLETE</span><h2>{copy("模拟结束", "Simulation Complete")}</h2></div>
-          <button className="btn" onClick={onClose}>{copy("关闭", "Close")}</button>
-        </div>
+    <ModalFrame className="run-result-card" backdropClassName="result-backdrop" kicker="SIMULATION COMPLETE" title={copy("模拟结束", "Simulation Complete")}
+      closeLabel={copy("关闭", "Close")} onClose={onClose}>
         <div className="run-result-output">
           <strong>{copy("本次结果", "Result")}</strong>
           <div>{finalText || copy("运行已经完成，暂无可展示的最终文本。", "The run completed without a final text output.")}</div>
@@ -156,8 +142,7 @@ export function RunResultOverlay({
             <div>{report.report_markdown}</div>
           </div>
         ) : null}
-        {runId ? <MediaStudio runId={runId} sourceText={report?.report_markdown ?? finalText} copy={copy} /> : null}
-      </div>
-    </div>
+        {runId ? <MediaStudio runId={runId} sourceText={report?.report_markdown ?? finalText} copy={copy} onSceneBackground={onSceneBackground} /> : null}
+    </ModalFrame>
   );
 }

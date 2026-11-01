@@ -72,10 +72,13 @@ async def encode_state_batch(*, provider: Any, state: dict[str, Any], proposal: 
                              actions: list[dict[str, Any]], seq: int, round_index: int,
                              record: Callable[[dict[str, Any], dict[str, Any]], None]) -> None:
     """Reuse the audit's patch; only a failed batch permits one additional coding request."""
+    repair_metrics: dict[str, Any] = {}
     for attempt in (1, 2):
         next_state, result = apply_state_batch(state.get("dynamic_state", {}), proposal,
                                               actions=actions, seq=seq, round_index=round_index)
         result["coding"]["attempt"] = attempt
+        if repair_metrics:
+            result["coding"]["metrics"] = repair_metrics
         record(next_state, result)
         if result["coding"]["status"] == "coded":
             return
@@ -88,3 +91,4 @@ async def encode_state_batch(*, provider: Any, state: dict[str, Any], proposal: 
               "Return explicit empty schema_ops/state_ops only if no persistent update is warranted. Safe errors:\n"
             + json.dumps([{"kind": item["kind"], "reason": item["reason"]} for item in result["rejected"]]))
         proposal = proposal_from_response(response)
+        repair_metrics = response.get("metrics", {})

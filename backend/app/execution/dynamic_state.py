@@ -43,10 +43,13 @@ def state_coder_audit_clause(actions: list[dict[str, Any]], *, actions_in_audit:
         "concept represents it. Do not store prose, style, ordinary dialogue, transient gestures, or duplicate facts. "
         "Turn Delta, Scene Contract, and stagnation verdicts are runtime controls, never durable facts; ignore them as evidence. "
         "Reuse existing concepts. Private knowledge requires visibility=private and owner_id set to the exact source node_id. "
-        "Every schema and state operation must cite one or more exact source_refs copied from UNCODED ACTIONS; never "
+        "Every schema and state operation must cite source_refs as an array of objects, each containing all three "
+        "fields node_id, action_index and event_seq copied from the SAME UNCODED ACTION reference below. "
+        "Do not use a concept ID, round number or invented event number as a source. Never "
         "promote an unsupported claim into an established fact. scope, owner_id, visibility, and value_type are immutable after creation. "
-        "Put the proposal in state_patch with "
-        "schema_ops and state_ops. Upserts require id, description, scope, owner_id, value_type, visibility, retention, "
+        "Put the proposal in state_patch with explicit schema_ops and state_ops arrays. Each schema operation needs "
+        "op=upsert|retire; each state operation needs op=set|unset. Upserts require id, description, scope(global|entity), "
+        "owner_id (empty for global), value_type(scalar|text|list|object), visibility(global|private), retention, "
         "future_relevance, reason, and source_refs. Optional subject_id and predicate index the described entity and "
         "attribute; reuse existing exact predicates, do not confuse the subject with the private owner. "
         "retention is an object with mode persistent|until_resolved|rounds; "
@@ -66,6 +69,8 @@ def state_coder_audit_clause(actions: list[dict[str, Any]], *, actions_in_audit:
 
 def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, Any]], round_index: int) -> str:
     dynamic = compact_dynamic_state(state.get("dynamic_state", {}), include_private=True)
+    reference_example = json.dumps([{"node_id": node, "action_index": index, "event_seq": event}
+                                    for node, index, event in sorted(_allowed_source_refs(actions))[:1]])
     context = {
         "mode": state.get("mode", ""),
         "task_contract": state.get("task_contract", {}),
@@ -83,7 +88,8 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         "Before creating a concept, apply three gates: forgetting it could change a future outcome; it persists beyond this "
         "single action; and no existing concept can represent it. Reuse existing concepts whenever possible. Private knowledge "
         "must use visibility=private and owner_id set to the exact source node_id. Every operation must cite exact "
-        "source_refs copied from new_actions (node_id, action_index, event_seq). A participant claim is not automatically "
+        "source_refs as an array of objects copied from new_actions, each with all three fields node_id, action_index, "
+        "event_seq from the SAME action. Do not substitute a concept ID or round number. A participant claim is not automatically "
         "true; encode only what the cited action establishes, use confidence, and preserve "
         "uncertainty. Retire a concept only when it is resolved and cannot constrain future behavior. Return JSON only with "
         "schema_ops and state_ops. schema_ops support upsert or retire. state_ops support set or unset. Each upsert requires "
@@ -101,9 +107,9 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         '{"schema_ops":[{"op":"upsert|retire","id":"concept_id","description":"",'
         '"scope":"global|entity","owner_id":"","value_type":"scalar|text|list|object",'
         '"visibility":"global|private","retention":{"mode":"until_resolved"},"future_relevance":"",'
-        '"reason":"","source_refs":[{"node_id":"","action_index":1,"event_seq":1}]}],'
+        '"reason":"","source_refs":' + reference_example + '}],'
         '"state_ops":[{"op":"set|unset","concept_id":"concept_id","value":null,'
-        '"confidence":0.0,"evidence_kind":"inference","reason":"","source_refs":[{"node_id":"","action_index":1,"event_seq":1}]}]}'
+        '"confidence":0.0,"evidence_kind":"inference","reason":"","source_refs":' + reference_example + '}]}'
     )
 
 

@@ -18,7 +18,12 @@ import { useLiveBroadcast } from "./hooks/useLiveBroadcast";
 import { LiveControls } from "./components/LiveControls";
 import type { LivePlaybackMode } from "./livePlayback";
 import { mergeRunEvents, useRunPolling } from "./hooks/useRunPolling";
-import { Topbar } from "./components/Topbar";
+import { JourneyHeader } from "./components/journey/JourneyHeader";
+import { Launchpad } from "./components/journey/Launchpad";
+import { DirectorComposer } from "./components/journey/DirectorComposer";
+import { WorkspaceRail } from "./components/journey/WorkspaceRail";
+import { SceneViewport } from "./scene/SceneViewport";
+import { buildSceneFrame } from "./scene/presentation";
 import { StudioDock } from "./components/StudioDock";
 import { StudioStatusRail } from "./components/StudioStatusRail";
 import { studioNodeTypes } from "./components/SimulationNode";
@@ -26,6 +31,7 @@ import { presentCanvasNodes } from "./canvasPresentation";
 import { EntityPalette } from "./components/EntityPalette";
 import { ModelConfigModal } from "./components/ModelConfigModal";
 import { ProjectLibraryModal } from "./components/ProjectLibraryModal";
+import { DrawerFrame } from "./components/PanelFrame";
 import { EvidenceOverlay, LiveTranscriptOverlay, RunResultOverlay } from "./components/RunOverlays";
 import { normalizeModelProvider } from "./modelProviders";
 import { defaultEdgeInteraction, useSelectedStore, useWorkflowStore } from "./store";
@@ -101,6 +107,9 @@ export default function App() {
     void i18n.changeLanguage(nextLang);
   };
   const [runId, setRunId] = useState<string | null>(null);
+  const [screen, setScreen] = useState<"home" | "workspace">("home");
+  const [workspaceView, setWorkspaceView] = useState<"scene" | "editor">("scene");
+  const launchAfterSetup = useRef(false);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [runStatus, setRunStatus] = useState<string>("idle");
   const [humanResponseText, setHumanResponseText] = useState("");
@@ -168,6 +177,7 @@ export default function App() {
   const [planMode, setPlanMode] = useState<"auto" | "research" | "roleplay" | "custom" | "collab">("auto");
   const [planSubmode, setPlanSubmode] = useState<"auto" | "simulation" | "research" | "consulting">("auto");
   const [planDraft, setPlanDraft] = useState<PlanCompileResponse | null>(null);
+  const [draftRoleEdits, setDraftRoleEdits] = useState<Record<string, { original_name: string; config: Record<string, string> }>>({});
   const [evidencePack, setEvidencePack] = useState<EvidencePack | null>(null);
   const [showEvidenceModal, setShowEvidenceModal] = useState(false);
   const [showOpenProject, setShowOpenProject] = useState(false);
@@ -291,10 +301,12 @@ export default function App() {
     }
     const generatedMode = String(planDraft.simulation_blueprint?.mode ?? "custom");
     const generatedSubmode = String(planDraft.simulation_blueprint?.submode ?? "none");
-    return generatedMode !== planMode || (planMode === "research" && generatedSubmode !== planSubmode);
-  }, [planDraft, planMode, planSubmode]);
+    return generatedMode !== planMode || (planMode === "research" && generatedSubmode !== planSubmode) || Object.keys(draftRoleEdits).length > 0;
+  }, [planDraft, planMode, planSubmode, draftRoleEdits]);
 
   useEffect(() => {
+    setProjectsLoading(true);
+    api.listWorkflows().then(setProjects).catch(() => setProjects([])).finally(() => setProjectsLoading(false));
     api
       .getNodeSpecs()
       .then((specs) => {
@@ -361,7 +373,10 @@ export default function App() {
       const payload = buildWorkflowPayload();
       return api.updateWorkflow(payload);
     },
-    onSuccess: () => setUiNotice({ type: "success", message: copy("已保存", "Saved") }),
+    onSuccess: (saved) => {
+      setProjects(previous => [{ id: saved.id, name: saved.name, version: saved.version }, ...previous.filter(project => project.id !== saved.id)]);
+      setUiNotice({ type: "success", message: copy("已保存", "Saved") });
+    },
     onError: (err) => setUiNotice({ type: "error", message: err instanceof Error ? err.message : copy("保存失败", "Save failed") })
   });
 
@@ -372,6 +387,7 @@ export default function App() {
       return api.runWorkflow(payload.id, { task: runInput.trim() || payload.environment.scenario || payload.name });
     },
     onSuccess: (result) => {
+      setScreen("workspace");
       setUiNotice({ type: "success", message: copy("运行已启动", "Run started") });
       setRunId(result.run_id);
       setRunStatus(result.status);
@@ -556,7 +572,12 @@ export default function App() {
       setModelDefaultModel(config.default_model);
       setModelApiKey("");
       setModelTestResult(null);
+      setShowModelConfig(false);
       setUiNotice({ type: "success", message: copy("模型配置已保存", "Model config saved") });
+      if (launchAfterSetup.current && (!config.requires_api_key || config.has_api_key)) {
+        launchAfterSetup.current = false;
+        compilePlanMutation.mutate(undefined);
+      }
     },
     onError: (err) => setUiNotice({ type: "error", message: err instanceof Error ? err.message : copy("模型配置保存失败", "Model config save failed") })
   });
@@ -580,6 +601,11 @@ export default function App() {
 
   const acceptPlanCompileResponse = (data: PlanCompileResponse) => {
     setPlanDraft(data);
+    setDraftRoleEdits({});
+    setScreen("workspace");
+    setWorkspaceView("scene");
+    setActiveStudioPanel(null);
+    setSelectedNodeId(null);
     const detectedMode = String(data.simulation_blueprint?.mode ?? "custom");
     setPlanMode((detectedMode === "research" || detectedMode === "roleplay" || detectedMode === "custom") ? detectedMode : "custom");
     const detectedSubmode = String(data.simulation_blueprint?.submode ?? "auto");
@@ -601,9 +627,9 @@ export default function App() {
   });
 
   const compilePlanMutation = useMutation({
-    mutationFn: async () =>
+    mutationFn: async (override?: string) =>
       api.compileTemplate({
-        plan_text: planText.trim(),
+        plan_text: (override ?? planText).trim(),
         mode: "auto",
         max_agents: 6,
         language: lang === "en-US" ? "en" : "zh"
@@ -626,7 +652,7 @@ export default function App() {
       setPlanText(directorText.trim());
       setDirectorText("");
       acceptPlanCompileResponse(data);
-      setActiveStudioPanel("create");
+      setActiveStudioPanel(null);
       setCreateStep("auto");
       setShowDirectorBubble(false);
       setUiNotice({
@@ -807,7 +833,7 @@ export default function App() {
   const hoverEnabled = nodes.length > 0 && nodes.length <= 12;
 
   const onExport = () => {
-    const payload = buildWorkflowPayload();
+    const payload = planDraft?.workflow ?? buildWorkflowPayload();
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -837,7 +863,7 @@ export default function App() {
     updateSimulationMeta({ role_cards: roleCards.filter((r) => r.id !== id) });
   };
 
-  const applyPlanDraft = async () => {
+  const applyPlanDraft = async (startAfterApply = false) => {
     if (!planDraft) {
       return;
     }
@@ -848,15 +874,18 @@ export default function App() {
       const modeChanged = generatedMode !== planMode || (planMode === "research" && generatedSubmode !== planSubmode);
       const draftEvidence = (planDraft.workflow.environment.simulation as Record<string, unknown> | undefined)?.evidence;
       const evidenceChanged = planMode === "research" && evidencePack !== null && !draftEvidence;
-      if (modeChanged || evidenceChanged) {
+      if (modeChanged || evidenceChanged || Object.keys(draftRoleEdits).length) {
+        const revisedText = planText.trim() + (Object.keys(draftRoleEdits).length
+          ? `\n\nExplicit user role revisions (preserve all other requirements):\n${JSON.stringify(draftRoleEdits)}` : "");
         const refreshedDraft = await api.compileTemplate({
-            plan_text: planText.trim(),
+            plan_text: revisedText,
             mode: planMode,
             submode: planMode === "research" && planSubmode !== "auto" ? planSubmode : undefined,
             max_agents: 6,
             language: lang === "en-US" ? "en" : "zh",
             evidence_pack: evidencePack ?? undefined
           });
+        setPlanText(revisedText);
         acceptPlanCompileResponse(refreshedDraft);
         setUiNotice({ type: "success", message: copy("导演已按新模式更新方案，请再次确认", "Director updated the plan. Review it once more.") });
         return;
@@ -866,10 +895,19 @@ export default function App() {
         return;
       }
       useWorkflowStore.getState().loadWorkflow(planDraft.workflow);
+      setRunId(null);
+      setRunStatus("idle");
+      setEvents([]);
+      setReportResult(null);
+      setDirectorResult(null);
+      resetLiveBroadcast();
       setPlanDraft(null);
       setActiveStudioPanel(null);
       setShowDirectorBubble(false);
+      setScreen("workspace");
       setUiNotice({ type: "success", message: copy("方案已应用，可以开始模拟", "Plan applied. The simulation is ready.") });
+      if (startAfterApply) runMutation.mutate();
+      return true;
     } catch (error) {
       setUiNotice({ type: "error", message: error instanceof Error ? error.message : copy("应用方案失败", "Failed to apply plan") });
     } finally {
@@ -919,6 +957,11 @@ export default function App() {
       const text = await file.text();
       const parsed = validateImportedWorkflow(JSON.parse(text));
       useWorkflowStore.getState().loadWorkflow(parsed);
+      setPlanDraft(null);
+      setRunId(null);
+      setRunStatus("idle");
+      setEvents([]);
+      setScreen("workspace");
       setUiNotice({ type: "success", message: copy("工作流已导入", "Workflow imported") });
     } catch (err) {
       setUiNotice({ type: "error", message: err instanceof Error ? err.message : copy("导入失败", "Import failed") });
@@ -936,6 +979,12 @@ export default function App() {
     try {
       const detail = await api.getTemplate(templateId);
       useWorkflowStore.getState().loadWorkflow(detail.workflow);
+      setPlanDraft(null);
+      setRunId(null);
+      setRunStatus("idle");
+      setEvents([]);
+      setScreen("workspace");
+      setActiveStudioPanel(null);
       setUiNotice({ type: "success", message: copy("模板已加载", "Template loaded") });
     } catch (err) {
       setUiNotice({ type: "error", message: err instanceof Error ? err.message : copy("模板加载失败", "Template loading failed") });
@@ -962,6 +1011,10 @@ export default function App() {
       setRunId(null);
       setRunStatus("idle");
       setEvents([]);
+      setPlanDraft(null);
+      setSelectedNodeId(null);
+      setScreen("workspace");
+      setWorkspaceView("scene");
       setShowOpenProject(false);
       setProjectSearch("");
       resetLiveBroadcast();
@@ -976,21 +1029,54 @@ export default function App() {
     return !query || project.name.toLowerCase().includes(query) || project.id.toLowerCase().includes(query);
   });
 
+  const displayWorkflow = useMemo(() => planDraft?.workflow ?? buildWorkflowPayload(), [planDraft, workflow, nodes, edges, buildWorkflowPayload]);
+  const sceneFrame = useMemo(() => buildSceneFrame(displayWorkflow, planDraft ? [] : visibleEvents), [displayWorkflow, planDraft, visibleEvents]);
+  const sceneSelection = displayWorkflow.nodes.find(node => node.id === selectedNodeId) ?? null;
+  const activeRun = ["queued", "pending", "running", "waiting_human", "stopping"].includes(runStatus);
+  const planning = compilePlanMutation.isPending || directorArrangeMutation.isPending || isApplyingPlanDraft;
+  const enterEditor = (panel: "create" | "inspect" | "advanced" | null, step?: "manual" | "templates") => {
+    if (planDraft) {
+      setUiNotice({ type: "error", message: tr("journey.reviewFirst") });
+      return;
+    }
+    setScreen("workspace"); setWorkspaceView("editor"); setActiveStudioPanel(panel);
+    if (step) setCreateStep(step);
+  };
+  const generateFromHome = () => {
+    if (!planText.trim() || planning || activeRun) return;
+    if (!modelConfig || (modelConfig.requires_api_key && !modelConfig.has_api_key)) {
+      launchAfterSetup.current = true; setShowModelConfig(true); return;
+    }
+    compilePlanMutation.mutate(undefined);
+  };
+  const sendComposer = () => {
+    if (!directorText.trim() || planning || directorCommandMutation.isPending) return;
+    if (activeRun && runId) { directorCommandMutation.mutate(); return; }
+    const next = `${planText || displayWorkflow.environment.scenario || displayWorkflow.name}\n\n${directorText.trim()}`;
+    setPlanText(next); setDirectorText(""); compilePlanMutation.mutate(next);
+  };
+  const patchSceneRole = (id: string, field: string, value: string) => {
+    if (activeRun) return;
+    if (planDraft) {
+      setDraftRoleEdits(previous => ({ ...previous, [id]: {
+        original_name: previous[id]?.original_name ?? String(planDraft.workflow.nodes.find(node => node.id === id)?.config.entity_name ?? id),
+        config: { ...previous[id]?.config, [field]: value },
+      } }));
+      setPlanDraft({ ...planDraft, workflow: { ...planDraft.workflow,
+        nodes: planDraft.workflow.nodes.map(node => node.id === id ? { ...node, config: { ...node.config, [field]: value } } : node) } });
+    }
+    else updateNodeConfig(id, field, value);
+  };
+
   return (
-    <div className={`page theme-${uiMode}`}>
-      <Topbar
-        lang={lang}
-        workflowName={workflow.name}
-        isSaving={saveMutation.isPending}
-        isStarting={runMutation.isPending}
-        isRunning={["queued", "pending", "running"].includes(runStatus)}
-        isStopping={runStatus === "stopping" || stopMutation.isPending}
-        onLangChange={setLang}
-        onWorkflowNameChange={setWorkflowMeta}
+    <div className={`page journey-page theme-${uiMode} journey-${screen}`}>
+      <JourneyHeader home={screen === "home"} title={displayWorkflow.name} lang={lang} editor={workspaceView === "editor"} hasDraft={Boolean(planDraft)}
+        onHome={() => { setScreen("home"); setActiveStudioPanel(null); }} onLanguage={setLang}
+        onTitle={value => planDraft ? setPlanDraft({ ...planDraft, workflow: { ...planDraft.workflow, name: value } }) : setWorkflowMeta(value)}
+        onProjects={() => void openProjectLibrary()} onSettings={() => setShowModelConfig(true)}
+        onScene={() => { setWorkspaceView("scene"); setActiveStudioPanel(null); }} onEditor={() => enterEditor(null)}
+        onAdvanced={() => enterEditor("advanced")} onManual={() => enterEditor("create", "manual")} onTemplates={() => enterEditor("create", "templates")}
         onSave={() => saveMutation.mutate()}
-        onOpenProject={() => void openProjectLibrary()}
-        onRun={() => runMutation.mutate()}
-        onStop={() => stopMutation.mutate()}
         onExport={onExport}
         onImport={onImport}
       />
@@ -1027,7 +1113,7 @@ export default function App() {
         saving={saveModelConfigMutation.isPending}
         testing={testModelConfigMutation.isPending}
         copy={copy}
-        onClose={() => setShowModelConfig(false)}
+        onClose={() => { setShowModelConfig(false); launchAfterSetup.current = false; }}
         onProviderChange={(provider, baseUrl, model) => {
           setModelProvider(provider);
           setModelBaseUrl(baseUrl);
@@ -1079,9 +1165,18 @@ export default function App() {
           setShowLiveTranscript(true);
         }}
         onGenerateReport={(mode) => runId && reportMutation.mutate({ run: runId, mode })}
+        onSceneBackground={url => {
+          const current = sceneFrame.presentation;
+          updateSimulationMeta({ presentation: { ...current, assets: [...current.assets.filter(asset => asset.kind !== "background"), { kind: "background", url }] } });
+          setShowRunResults(false); setWorkspaceView("scene");
+        }}
       />
 
-      <StudioStatusRail
+      {screen === "home" ? <Launchpad value={planText} busy={planning || activeRun} projects={projects} loading={projectsLoading} canResume={nodes.length > 0 || Boolean(planDraft)}
+        onChange={setPlanText} onGenerate={generateFromHome} onOpen={id => void openProject(id)}
+        onResume={() => setScreen("workspace")} onManual={() => enterEditor("create", "manual")}
+        onUpload={file => { void file.text().then(setPlanText).catch(err => setUiNotice({ type: "error", message: String(err) })); }} /> : <>
+      {workspaceView === "editor" ? <StudioStatusRail
         copy={copy}
         modelReady={Boolean(modelConfig && (!modelConfig.requires_api_key || modelConfig.has_api_key))}
         modelName={modelConfig?.default_model ?? "gpt-4o-mini"}
@@ -1097,17 +1192,12 @@ export default function App() {
           setSelectedEdgeId(null);
           setActiveStudioPanel("inspect");
         }}
-      />
+      /> : null}
 
-      <div className="layout studio-layout">
-        <aside aria-hidden={activeStudioPanel !== "create"} className={`sidebar left studio-drawer studio-drawer-left ${activeStudioPanel === "create" ? "open" : ""}`}>
-          <button className="drawer-close" onClick={() => setActiveStudioPanel(null)} aria-label="close-create-panel">
-            ×
-          </button>
-          <div className="sidebar-header">
-            <h3>{copy("创建模拟", "Create Simulation")}</h3>
-            <span className="count-chip">{createStep === "auto" ? copy("导演", "Director") : createStep === "manual" ? tr("manual") : tr("templates")}</span>
-          </div>
+      <div className={`layout studio-layout journey-layout ${workspaceView === "scene" ? "scene-workspace" : "editor-workspace"}`}>
+        <DrawerFrame open={activeStudioPanel === "create"} className="left studio-drawer-left"
+          title={copy("创建模拟", "Create Simulation")} closeLabel="close-create-panel" onClose={() => setActiveStudioPanel(null)}
+          badge={createStep === "auto" ? copy("导演", "Director") : createStep === "manual" ? tr("manual") : tr("templates")}>
           <div className="create-stepper">
             {[
               ["auto", copy("交给导演", "Director")],
@@ -1281,7 +1371,7 @@ export default function App() {
                 }}
               />
             </label>
-            <button className="btn" disabled={compilePlanMutation.isPending || planText.trim().length === 0} onClick={() => compilePlanMutation.mutate()}>
+            <button className="btn" disabled={compilePlanMutation.isPending || planText.trim().length === 0} onClick={() => compilePlanMutation.mutate(undefined)}>
               {compilePlanMutation.isPending ? tr("compiling") : tr("generateWorkflow")}
             </button>
             {planDraft ? (
@@ -1447,9 +1537,10 @@ export default function App() {
               ))}
             </div>
           </div>
-        </aside>
+        </DrawerFrame>
 
         <main ref={canvasRef} className="canvas studio-canvas">
+          {workspaceView === "editor" ? <>
           <StudioDock
             activePanel={activeStudioPanel}
             isStarting={runMutation.isPending}
@@ -1572,6 +1663,7 @@ export default function App() {
                     ×
                   </button>
                 </div>
+                <div className="director-bubble-body">
                 <textarea
                   rows={4}
                   value={directorText}
@@ -1581,9 +1673,9 @@ export default function App() {
                 {runId ? (
                   <div className="mode-chip-row">
                     <select value={directorScope} onChange={(e) => setDirectorScope(e.target.value as "global" | "phase" | "node")}>
-                      <option value="global">global</option>
-                      <option value="phase">phase</option>
-                      <option value="node">node</option>
+                      <option value="global">{tr("global")}</option>
+                      <option value="phase">{copy("当前阶段", "Current Phase")}</option>
+                      <option value="node">{tr("node")}</option>
                     </select>
                     <button
                       className="btn warning"
@@ -1615,6 +1707,7 @@ export default function App() {
                   </div>
                 )}
                 {directorResult ? <div className="empty-hint">{directorResult.guidance}</div> : null}
+                </div>
               </div>
             ) : null}
           </div>
@@ -1627,29 +1720,44 @@ export default function App() {
               {hoverRoleCard.card.boundaries ? <div className="hover-role-line">Boundary: {hoverRoleCard.card.boundaries}</div> : null}
             </div>
           ) : null}
+          </> : <>
+            <div className="scene-workspace-heading">
+              <div><span className="journey-stage-label">{tr(planDraft ? "journey.draftReady" : activeRun ? "journey.live" : "journey.ready")}</span>
+                <span>{tr("journey.participants", { count: sceneFrame.actors.length })}</span></div>
+              {runId ? <button onClick={() => setShowLiveTranscript(true)}>{tr("journey.fullScene")}</button> : null}
+            </div>
+            <SceneViewport frame={sceneFrame} selectedId={selectedNodeId} onSelect={setSelectedNodeId} />
+            {directorResult?.guidance ? <div className="journey-director-response">{directorResult.guidance}</div> : null}
+            <DirectorComposer value={directorText} busy={planning || directorCommandMutation.isPending || runMutation.isPending}
+              running={activeRun} stopping={runStatus === "stopping" || stopMutation.isPending} canStart={displayWorkflow.nodes.length > 0 && !activeRun}
+              draft={Boolean(planDraft)} needsRefresh={draftNeedsRegeneration} onChange={setDirectorText} onSend={sendComposer}
+              onStart={() => planDraft ? void applyPlanDraft(true) : runMutation.mutate()} onStop={() => stopMutation.mutate()}
+              onResults={() => setShowRunResults(true)} hasResults={runStatus === "succeeded"} />
+          </>}
         </main>
 
-        <aside
-          aria-hidden={activeStudioPanel !== "inspect" && activeStudioPanel !== "advanced"}
-          className={`sidebar right studio-drawer studio-drawer-right ${activeStudioPanel === "inspect" || activeStudioPanel === "advanced" ? "open" : ""} ${
-            activeStudioPanel === "advanced" ? "advanced-open" : "inspect-open"
-          }`}
-        >
-          <button className="drawer-close" onClick={() => setActiveStudioPanel(null)} aria-label="close-inspector-panel">
-            ×
-          </button>
-          <div className="sidebar-header">
-            <h3>{activeStudioPanel === "advanced" ? tr("advanced") : tr("inspector")}</h3>
-            <span className="selection-chip">
-              {activeStudioPanel === "advanced"
-                ? `${runStatus} · ${eventCount}`
+        {workspaceView === "scene" ? <WorkspaceRail draft={Boolean(planDraft)} mode={planMode} submode={planSubmode}
+          goal={planDraft ? String(planDraft.simulation_blueprint?.goal ?? planDraft.workflow.environment.scenario) : displayWorkflow.environment.scenario}
+          actors={sceneFrame.actors} selected={sceneSelection} rows={planDraft ? [] : glimpseRows} running={activeRun} status={planDraft ? "idle" : runStatus}
+          onMode={setPlanMode} onSubmode={setPlanSubmode} onSelect={setSelectedNodeId} onConfig={patchSceneRole}
+          onAdvanced={() => enterEditor("inspect")} onTranscript={() => setShowLiveTranscript(true)}
+          onApplyEdit={() => { void applyPlanDraft().then(applied => { if (applied) { setWorkspaceView("editor"); setActiveStudioPanel("inspect"); } }); }}
+          onDiscard={() => { setPlanDraft(null); setScreen(nodes.length ? "workspace" : "home"); }}
+          humanQuestion={String(((waitingEvent?.payload.output ?? {}) as Record<string, unknown>).question ?? tr("journey.yourDecision"))}
+          humanResponse={humanResponseText} humanBusy={humanResponseMutation.isPending} onHumanChange={setHumanResponseText}
+          onHumanConfirm={() => humanResponseMutation.mutate({ node_id: waitingNodeId, response: humanResponseText, responder: humanResponder })} /> : null}
+
+        <DrawerFrame open={activeStudioPanel === "inspect" || activeStudioPanel === "advanced"}
+          className={`right studio-drawer-right ${activeStudioPanel === "advanced" ? "advanced-open" : "inspect-open"}`}
+          title={activeStudioPanel === "advanced" ? tr("advanced") : tr("inspector")}
+          closeLabel="close-inspector-panel" onClose={() => setActiveStudioPanel(null)}
+          badge={activeStudioPanel === "advanced"
+                ? `${tr(`studio.status.${runStatus}`)} · ${eventCount}`
                 : selectedNode
                   ? `${tr("node")}: ${selectedNode.id}`
                   : selectedEdge
                     ? `Edge: ${selectedEdge.id}`
-                    : tr("global")}
-            </span>
-          </div>
+                    : tr("global")}>
           <div className="inspector-panel">
           {selectedNode ? (
             <>
@@ -1681,11 +1789,6 @@ export default function App() {
           </div>
 
           <div className="advanced-panel">
-          <div className="sidebar-header logs-header">
-            <h3>{copy("高级控制台", "Advanced Console")}</h3>
-            <span className="count-chip">{eventCount}</span>
-          </div>
-
           <div className="analytics-block product-settings-block">
             <div className="sidebar-header logs-header">
               <h3>{copy("产品设置", "Product Settings")}</h3>
@@ -1694,7 +1797,7 @@ export default function App() {
             <div className="mode-chip-row">
               {(["research", "roleplay", "custom"] as UiMode[]).map((mode) => (
                 <button key={mode} className={`btn ${uiMode === mode ? "primary" : ""}`} onClick={() => onUiModeChange(mode)}>
-                  {mode}
+                  {tr(`studio.mode.${mode}`)}
                 </button>
               ))}
             </div>
@@ -2547,8 +2650,9 @@ export default function App() {
             )}
           </div>
           </div>
-        </aside>
+        </DrawerFrame>
       </div>
+      </>}
     </div>
   );
 }

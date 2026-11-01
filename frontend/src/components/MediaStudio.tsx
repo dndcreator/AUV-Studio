@@ -2,14 +2,16 @@ import { useEffect, useState } from "react";
 import { api, apiAssetUrl } from "../api";
 import { inferMediaPreset, mediaPreset, mediaPresets, presetRequest, type MediaPresetId } from "../mediaProviders";
 import type { MediaConfig, MediaConfigRequest, MediaGeneration, MediaType, ModelConfigTestResponse } from "../types";
+import { ModalFrame } from "./PanelFrame";
 
 type Props = {
   runId: string;
   sourceText: string;
   copy: (zh: string, en: string) => string;
+  onSceneBackground?: (url: string) => void;
 };
 
-export function MediaStudio({ runId, sourceText, copy }: Props) {
+export function MediaStudio({ runId, sourceText, copy, onSceneBackground }: Props) {
   const initialPreset = mediaPreset("image", "openai");
   const [mediaType, setMediaType] = useState<MediaType>("image");
   const [presetId, setPresetId] = useState<MediaPresetId>("openai");
@@ -160,6 +162,8 @@ export function MediaStudio({ runId, sourceText, copy }: Props) {
                 {asset.status === "completed" && src && asset.media_type === "video" ? <video src={src} controls /> : null}
                 {asset.status !== "completed" ? <div className="media-asset-wait">{asset.status}</div> : null}
                 <details><summary>{copy("镜头提示", "Shot Prompt")}</summary><p>{asset.prompt}</p></details>
+                {onSceneBackground && asset.status === "completed" && asset.media_type === "image" && asset.url.startsWith("/api/media/") ?
+                  <button className="btn" onClick={() => onSceneBackground(asset.url)}>{copy("用作场景背景", "Use as scene background")}</button> : null}
               </article>
             );
           })}
@@ -167,12 +171,7 @@ export function MediaStudio({ runId, sourceText, copy }: Props) {
       ) : null}
 
       {setupOpen ? (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal-card media-config-card">
-            <div className="modal-head">
-              <h2>{copy("连接媒体模型", "Connect Media Model")}</h2>
-              <button className="btn" onClick={() => setSetupOpen(false)}>{copy("关闭", "Close")}</button>
-            </div>
+        <ModalFrame className="media-config-card" title={copy("连接媒体模型", "Connect Media Model")} closeLabel={copy("关闭", "Close")} onClose={() => setSetupOpen(false)}>
             <div className="media-provider-picks">
               {mediaPresets(mediaType).map((item) => (
                 <button key={item.id} className={presetId === item.id ? "active" : ""} onClick={() => changePreset(item.id)}>
@@ -205,8 +204,7 @@ export function MediaStudio({ runId, sourceText, copy }: Props) {
                 {busy ? copy("连接中...", "Connecting...") : copy("测试并保存", "Test & Save")}
               </button>
             </div>
-          </div>
-        </div>
+        </ModalFrame>
       ) : null}
     </div>
   );

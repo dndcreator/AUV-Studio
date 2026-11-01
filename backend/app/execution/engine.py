@@ -389,6 +389,7 @@ class WorkflowEngine:
                     activation.get("scene_contract"), context.get("_simulation", {})
                 )
             activation["scene_contract"] = context["_scene_control"]["contract"]
+            activation["metrics"] = activation_response.get("metrics", {})
             active_ids = set(activation["active_node_ids"])
             active_nodes = [node for node in entities if node.id in active_ids]
             _, last_event_hash = emit_event(
@@ -650,6 +651,7 @@ class WorkflowEngine:
                         "round": round_index,
                         **audit_payload,
                         "progress_assessment": progress_assessment,
+                        "metrics": response.get("metrics", {}),
                         "scene_control": context["_scene_control"],
                         "_rollback_snapshot": continuous_snapshot(context, recent_actions, round_index, action_index, simulation_seq),
                     },

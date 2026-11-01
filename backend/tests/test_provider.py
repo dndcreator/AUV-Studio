@@ -155,7 +155,37 @@ def test_deepseek_eval_can_disable_thinking(monkeypatch) -> None:
     asyncio.run(provider.chat(model="", system_prompt="system", user_prompt="hello"))
     payload = _Client.calls[0]["json"]
     assert payload["thinking"] == {"type": "disabled"}
-    assert payload["reasoning_effort"] == "none"
+    assert "reasoning_effort" not in payload
+
+
+@pytest.mark.parametrize("model", ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"])
+def test_official_deepseek_defaults_to_low_effort_without_disabling_reasoning(monkeypatch, model):
+    _Client.calls = []
+    _Client.response = {"choices": [{"message": {"content": "ok"}}]}
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", _Client)
+    provider = OpenAICompatibleProvider("https://api.deepseek.com/v1", "key", 10, 0, default_model=model)
+    response = asyncio.run(provider.chat("", "system", "user"))
+    payload = _Client.calls[0]["json"]
+    assert payload["reasoning_effort"] == "low"
+    assert "thinking" not in payload
+    assert response["metrics"]["provider_attempts"] == 1
+    assert response["metrics"]["provider_duration_ms"] >= 0
+
+
+@pytest.mark.parametrize("url,model", [
+    ("http://localhost:1234/v1", "deepseek-v4-flash"),
+    ("https://proxy.invalid/v1", "deepseek-v4-flash"),
+    ("https://api.deepseek.com.attacker.invalid/v1", "deepseek-v4-pro"),
+    ("https://api.deepseek.com/v1", "deepseek-reasoner"),
+    ("https://api.deepseek.com/v1", "other-model"),
+])
+def test_reasoning_defaults_do_not_change_other_endpoints_or_legacy_models(monkeypatch, url, model):
+    _Client.calls = []
+    _Client.response = {"choices": [{"message": {"content": "ok"}}]}
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", _Client)
+    asyncio.run(OpenAICompatibleProvider(url, "key", 10, 0).chat(model, "system", "user"))
+    payload = _Client.calls[0]["json"]
+    assert "thinking" not in payload and "reasoning_effort" not in payload
 
 
 def test_local_openai_compatible_endpoint_does_not_require_key(monkeypatch) -> None:

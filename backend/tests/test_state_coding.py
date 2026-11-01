@@ -12,7 +12,7 @@ from app.evaluation.budget import BudgetedProvider, EvalBudget, EvalBudgetExceed
 from app.execution.action_boundary import ActionBoundaryError, validate_actor_context
 from app.execution.action_consistency import build_consistency_evidence
 from app.execution.checkpoints import continuous_snapshot, restore_continuous_checkpoint
-from app.execution.dynamic_state import init_dynamic_state, query_dynamic_state, simulation_state_for_node
+from app.execution.dynamic_state import init_dynamic_state, query_dynamic_state, simulation_state_for_node, state_coder_instruction, state_coder_audit_clause
 from app.execution.engine import WorkflowEngine
 from app.execution.scene_control import scene_audit_instruction
 from app.execution.state_coding import StateCodingError, apply_state_batch, encode_state_batch, pending_state_actions, proposal_from_response
@@ -22,6 +22,19 @@ from app.service import verify_run_audit
 
 
 EMPTY = {"schema_ops": [], "state_ops": []}
+
+
+def test_coder_example_uses_real_event_reference_and_audit_specifies_full_contract():
+    actions = [{"node_id": "actor_b", "action_index": 7, "event_seq": 982, "action": "I accept."}]
+    prompt = state_coder_instruction(state={}, actions=actions, round_index=3)
+    example = json.loads(prompt.split("OUTPUT SHAPE:\n", 1)[1])
+    ref = {key: actions[0][key] for key in ("node_id", "action_index", "event_seq")}
+    for operation in (example["schema_ops"][0], example["state_ops"][0]):
+        assert operation["source_refs"] == [ref]
+    audit = state_coder_audit_clause(actions, actions_in_audit=True)
+    assert "node_id, action_index and event_seq" in audit
+    assert "op=upsert|retire" in audit and "op=set|unset" in audit
+    assert "scope(global|entity)" in audit and "visibility(global|private)" in audit
 
 
 def action(seq=10, node="a"):

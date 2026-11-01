@@ -225,7 +225,7 @@ async def execute_node(
             )
         response = await effective_provider.chat(model=model, system_prompt=f"[{role}] {system_prompt}", user_prompt=user_prompt)
         content = _apply_output_contract(str(response["content"]), node.config.get("output_contract"))
-        return {"role": role, "content": content, "raw": response.get("raw", {})}
+        return {"role": role, "content": content, "raw": response.get("raw", {}), "metrics": response.get("metrics", {})}
 
     if node.type == "tool":
         name = str(node.config.get("tool_name", "echo"))

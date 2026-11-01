@@ -6,6 +6,7 @@ import "./i18n";
 import "reactflow/dist/style.css";
 import "./styles.css";
 import "./styles/studio.css";
+import "./styles/journey.css";
 
 const queryClient = new QueryClient();
 

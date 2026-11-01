@@ -1,8 +1,10 @@
 ﻿# 系统架构说明
 
-最后更新：2026-10-25
+最后更新：2026-11-01
 
 ## 1. 总体架构
+
+前端默认使用首页→草案→运行的一站式路径，原画布编辑器作为二级入口保留。只读场景投影、渲染协议和可选图片层见 [FRONTEND_JOURNEY.md](FRONTEND_JOURNEY.md)。展示元数据不具备世界事实写入权。
 
 - 前端：React + TypeScript + React Flow + Zustand + React Query + i18next/react-i18next
 - 后端：FastAPI + SQLAlchemy + SQLite
@@ -18,6 +20,7 @@
 - `canvasPresentation.ts` 只把当前可见运行事件投影成节点显示状态，回放和实时画布使用同一入口，不向工作流配置写入 UI 状态。
 - `components/SimulationNode.tsx` 独立渲染预设实体图标、名称、双语运行状态和 React Flow 连接点；技术节点不强加实体图标。
 - `styles/studio.css` 承载工作室外观、控件层次和响应式规则，加载于共享组件样式之后；保持既有黄色电视风格，不混入业务规则。
+- `components/PanelFrame.tsx` 统一抽屉与弹窗的标题区/正文滚动边界。弹窗通过 Portal 挂到 body，嵌套层级统一处理焦点与 Escape，避免媒体设置被结果面板裁切。业务配置仍由各自组件负责，不放入面板容器。
 
 2. Execution Engine（后端）
 - DAG 校验与拓扑顺序

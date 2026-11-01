@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import ipaddress
+from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse, urlsplit, urlunsplit
 
@@ -50,6 +51,21 @@ class OpenAICompatibleProvider:
         self.max_output_tokens = max_output_tokens
         self.thinking_mode = thinking_mode if thinking_mode in {"enabled", "disabled"} else None
 
+    def _thinking_options(self, model: str) -> dict[str, Any]:
+        # Do not send vendor-specific defaults to proxies or other local/remote APIs.
+        official_deepseek = (urlsplit(self.base_url).hostname or "").lower() == "api.deepseek.com"
+        supports_effort = official_deepseek and model.lower() in {
+            "deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro",
+        }
+        if self.thinking_mode == "disabled":
+            return {"thinking": {"type": "disabled"}}
+        options: dict[str, Any] = {}
+        if self.thinking_mode == "enabled":
+            options["thinking"] = {"type": "enabled"}
+        if supports_effort:
+            options["reasoning_effort"] = "low"
+        return options
+
     def with_output_limit(self, limit: int) -> OpenAICompatibleProvider:
         scoped = copy.copy(self)
         scoped.max_output_tokens = limit
@@ -92,14 +108,13 @@ class OpenAICompatibleProvider:
             payload = {"model": effective_model, "messages": messages}
             if self.max_output_tokens is not None:
                 payload["max_tokens"] = self.max_output_tokens
-            if self.thinking_mode is not None:
-                payload["thinking"] = {"type": self.thinking_mode}
-                payload["reasoning_effort"] = "none" if self.thinking_mode == "disabled" else "low"
+            payload.update(self._thinking_options(effective_model))
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         last_error: Exception | None = None
+        started = perf_counter()
         for attempt in range(self.retry_count + 1):
             try:
                 async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
@@ -128,7 +143,10 @@ class OpenAICompatibleProvider:
                         f"provider={self.provider_kind}; model={effective_model}; "
                         f"finish_reason={finish_reason or 'unknown'}; reasoning_only={reasoning_only}"
                     )
-                return {"content": content, "raw": data}
+                return {"content": content, "raw": data, "metrics": {
+                    "provider_duration_ms": round((perf_counter() - started) * 1000),
+                    "provider_attempts": attempt + 1,
+                }}
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 if isinstance(exc, ProviderError) and not exc.retryable:
