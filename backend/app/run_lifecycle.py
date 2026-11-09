@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .audit import load_last_event_hash
 from .execution.events import emit_event
 from .models import NodeRunRecord, RunRecord
+from .player_interventions import reject_pending_intervention
 
 
 ACTIVE_STATUSES = ("pending", "queued", "running", "stopping")
@@ -37,6 +38,7 @@ def fail_interrupted_run(db: Session, run_id: str, code: str, message: str) -> b
         emit_event(db, run_id, "run_control", "failed", {"error": error},
                    caused_by="recovery" if code == "RUNTIME_INTERRUPTED" else "queue",
                    prev_hash=load_last_event_hash(db, run_id)[1])
+        reject_pending_intervention(db, run_id)
     except Exception:
         db.rollback()
         raise

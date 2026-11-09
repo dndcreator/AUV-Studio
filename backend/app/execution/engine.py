@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections import defaultdict
@@ -12,9 +13,13 @@ from sqlalchemy.orm import Session
 from ..audit import load_last_event_hash
 from ..models import NodeRunRecord, RunRecord
 from ..schemas import RunRequest, WorkflowDefinition, WorkflowEdge, WorkflowNode
+from ..player_interventions import action_request, drain_intervention, outcome_facts, pending_action, reject_pending_intervention
+from ..player_controls import apply_controls
 from .nodes import HumanInterventionRequired, execute_node, resolve_inputs
-from .provider import OpenAICompatibleProvider
-from .action_consistency import admit_action, build_consistency_evidence
+from .provider import OpenAICompatibleProvider, ProviderError
+from .action_consistency import ActionConsistencyError, admit_action, build_consistency_evidence
+from .player_turns import PlayerTurnRejected, action_record, player_action_prompt
+from .restore_projection import publish_restored_state
 from .perception import actions_for_node, incoming_interactions, participant_context, participant_roster, public_action
 from .completion import completion_result, execution_allowance
 from .entity_contracts import entity_detail_instruction
@@ -31,6 +36,7 @@ from .checkpoints import (
     build_context_snapshot,
     continuous_snapshot,
     restore_continuous_checkpoint,
+    record_player_checkpoint,
     runtime_context_pack_snapshot,
 )
 from .director_policy import (
@@ -44,6 +50,7 @@ from .director_policy import (
 )
 from .events import (
     emit_event,
+    event_transaction,
     emit_human_resumed,
     is_director_preflight_response,
     load_previous_outputs,
@@ -340,7 +347,37 @@ class WorkflowEngine:
         control: dict[str, Any] = {}
         action_index = int(resume.get("action_index", len(recent_actions)) or 0) if isinstance(resume, dict) else 0
         start_round = int(resume.get("round", 0) or 0) + 1 if isinstance(resume, dict) else 1
+
+        async def apply_player_boundary(round_index: int) -> None:
+            nonlocal last_event_hash
+            apply_controls(db, run, context, recent_actions, round_index, action_index, simulation_seq)
+            await drain_intervention(db=db, run=run, workflow=workflow, provider=self.provider,
+                                     context=context, actions=recent_actions, round_index=round_index,
+                                     action_index=action_index, simulation_seq=simulation_seq)
+            last_event_hash = load_last_event_hash(db, run.id)[1]
+
+        async def wait_for_player(node: WorkflowNode, round_index: int) -> bool:
+            waiting = False
+            try:
+                while context.get("_player_controls", {}).get(node.id) == "player_controlled":
+                    if self._stop_requested(db, run.id):
+                        return False
+                    request = pending_action(db, run.id)
+                    if request:
+                        return True  # The caller may need to run a different queued actor first.
+                    if not waiting:
+                        emit_event(db, run.id, node.id, "player_waiting", {"actor_id": node.id, "waiting": True})
+                        waiting = True
+                    db.rollback()  # Do not retain a read transaction while waiting on a human.
+                    await asyncio.sleep(0.2)
+                    await apply_player_boundary(round_index)
+                return True
+            finally:
+                if waiting:
+                    emit_event(db, run.id, node.id, "player_waiting", {"actor_id": node.id, "waiting": False})
+
         for round_index in range(start_round, policy.max_rounds + 1):
+            await apply_player_boundary(round_index)
             simulation_state = context.get("_simulation", {})
             if isinstance(simulation_state, dict) and dynamic_state_enabled(simulation_state):
                 expired_state, expiry_result = expire_dynamic_state(
@@ -390,20 +427,27 @@ class WorkflowEngine:
                 )
             activation["scene_contract"] = context["_scene_control"]["contract"]
             activation["metrics"] = activation_response.get("metrics", {})
+            apply_controls(db, run, context, recent_actions, round_index, action_index, simulation_seq)
             active_ids = set(activation["active_node_ids"])
+            queued_action = pending_action(db, run.id)
+            if queued_action:
+                active_ids.add(json.loads(queued_action.payload_json)["actor_id"])
             active_nodes = [node for node in entities if node.id in active_ids]
+            active_nodes.sort(key=lambda node: context.get("_player_controls", {}).get(node.id) == "player_controlled")
+            activation["active_node_ids"] = [node.id for node in active_nodes]
             _, last_event_hash = emit_event(
                 db,
                 run.id,
                 "distributed_router",
                 "nodes_activated",
-                {"episode": round_index, **activation},
+                {"episode": round_index, **activation,
+                 "_rollback_snapshot": continuous_snapshot(context, recent_actions, round_index - 1, action_index, simulation_seq)},
                 caused_by="semantic_router",
                 context_snapshot={"episode": round_index, "active_node_ids": activation["active_node_ids"]},
                 prev_hash=last_event_hash,
             )
             boundary_votes = 0
-            for node in active_nodes:
+            for turn_index, node in enumerate(active_nodes):
                 if action_index >= policy.max_actions or stop_requested:
                     break
                 if self._stop_requested(db, run.id):
@@ -413,6 +457,29 @@ class WorkflowEngine:
                         output={"actions": recent_actions, "simulation": context.get("_simulation", {}), "scene_control": context.get("_scene_control", {})},
                         last_event_hash=load_last_event_hash(db, run.id)[1],
                     )
+                await apply_player_boundary(round_index)
+                if self._stop_requested(db, run.id):
+                    break
+                if context.get("_player_controls", {}).get(node.id) == "player_controlled" and any(
+                    context.get("_player_controls", {}).get(other.id) != "player_controlled"
+                    for other in active_nodes[turn_index + 1:]
+                ):
+                    active_nodes.append(node)
+                    continue
+                if not await wait_for_player(node, round_index):
+                    break
+                queued_action = pending_action(db, run.id)
+                if queued_action:
+                    target = json.loads(queued_action.payload_json)["actor_id"]
+                    if target != node.id and target not in [item.id for item in active_nodes[turn_index + 1:]]:
+                        active_nodes.append(next(item for item in entities if item.id == target))
+                    if target != node.id and context.get("_player_controls", {}).get(node.id) == "player_controlled":
+                        active_nodes.append(node)
+                        continue
+                player_request = action_request(db, run.id, node.id, context)
+                if context.get("_player_controls", {}).get(node.id) == "player_controlled" and not player_request:
+                    active_nodes.append(node)
+                    continue
                 director_override_cursor, override_guidance = pull_latest_director_override(
                     db,
                     workflow_id=workflow.id,
@@ -478,45 +545,32 @@ class WorkflowEngine:
                     "_global_guidance": guidance,
                     "_interactions": interactions,
                 }
-                output, _, success_seq, last_event_hash = await self._execute_continuous_node(
-                    db=db,
-                    run_id=run.id,
-                    workflow_id=workflow.id,
-                    node=node,
-                    runtime_input=runtime_input,
-                    context=context,
-                    simulation_seq=simulation_seq + 1,
-                    last_event_hash=last_event_hash,
-                    caused_by="simulation_turn",
-                    execution_context=execution_context,
-                    consistency_evidence=build_consistency_evidence(
-                        workflow, context.get("_simulation", {}), recent_actions, runtime_input,
-                    ),
-                )
+                if player_request:
+                    runtime_input["_player_request"] = player_request
+                    runtime_input["prompt"] += player_action_prompt(player_request["instruction"],
+                        controlled=player_request.get("control") == "player_controlled")
+                    record_player_checkpoint(db, run.id, player_request, context, recent_actions,
+                                             round_index, action_index, simulation_seq)
+                    emit_event(db, run.id, node.id, "player_action_started", {
+                        "request_seq": player_request["request_seq"], "request_id": player_request["request_id"],
+                        "actor_id": node.id,
+                    }, caused_by="player_gateway", parent_event_ids=[player_request["request_seq"]])
+                try:
+                    output, _, success_seq, last_event_hash = await self._execute_continuous_node(
+                        db=db, run_id=run.id, workflow_id=workflow.id, node=node, runtime_input=runtime_input,
+                        context=context, simulation_seq=simulation_seq + 1, last_event_hash=last_event_hash,
+                        caused_by="simulation_turn", execution_context=execution_context,
+                        consistency_evidence=build_consistency_evidence(
+                            workflow, context.get("_simulation", {}), recent_actions, runtime_input),
+                    )
+                except PlayerTurnRejected:
+                    if context.get("_player_controls", {}).get(node.id) == "player_controlled":
+                        active_nodes.append(node)
+                    continue
                 action_index += 1
                 simulation_seq += 1
                 context[node.id] = output
-                recent_actions.append(
-                    {
-                        "round": round_index,
-                        "action_index": action_index,
-                        "event_seq": success_seq,
-                        "received_event_seqs": list(dict.fromkeys(
-                            item["event_seq"] for item in context_packet["recent_actions"]
-                            if item.get("node_id") != node.id and isinstance(item.get("event_seq"), int)
-                        )),
-                        "node_id": node.id,
-                        "actor": node_subject(node),
-                        "participation": output.get("participation", "act"),
-                        "action": output.get("action", ""),
-                        "turn_delta": output.get("turn_delta", ""),
-                        "intent": output.get("intent", ""),
-                        "observation": output.get("observation", ""),
-                        "self_update": output.get("self_update", ""),
-                        "shared_effect_claim": output.get("shared_effect_claim", ""),
-                        **({"result": output["result"]} if isinstance(output.get("result"), bool) else {}),
-                    }
-                )
+                recent_actions.append(action_record(node, output, context_packet, success_seq, node_subject(node)))
                 if str(output.get("episode_signal") or output.get("boundary_signal", "none")) == "ready":
                     boundary_votes += 1
                 memory_content = str(output.get("action", "")).strip()
@@ -568,6 +622,7 @@ class WorkflowEngine:
                         ),
                     )
 
+            await apply_player_boundary(round_index)
             if self._stop_requested(db, run.id):
                 return self._finish_stopped_run(
                     db,
@@ -675,6 +730,7 @@ class WorkflowEngine:
                         prev_hash=last_event_hash,
                     )
                 stop_requested = control["decision"] == "stop"
+            await apply_player_boundary(round_index)
             if action_index >= policy.max_actions or stop_requested:
                 break
 
@@ -697,6 +753,8 @@ class WorkflowEngine:
                     "outcome; distinguish earlier intermediate states from the situation at the end. Do not retell every "
                     "beat unless the requested form needs it, or pad the summary with new unresolved hooks.\n"
                     f"{json.dumps([public_action(action) for action in recent_actions], ensure_ascii=False, default=str)}"
+                    "\nCurrent explicit player-established facts (not extra Agent actions; preserve who knows each fact):\n"
+                    f"{json.dumps(outcome_facts(context.get('_simulation', {})), ensure_ascii=False)}"
                 ),
                 "_environment": context.get("_runtime_environment", {}),
                 "_context_pack": context.get("_context_pack", {}),
@@ -780,6 +838,13 @@ class WorkflowEngine:
         admission_seq: int | None = None
         try:
             async def generate(actor_input: dict[str, Any]) -> dict[str, Any]:
+                player = runtime_input.get("_player_request", {})
+                if player.get("control") == "player_controlled":
+                    scoped = self.provider.with_output_limit(2400) if hasattr(self.provider, "with_output_limit") else self.provider
+                    return await asyncio.wait_for(scoped.chat(model="",
+                        system_prompt="Render this player-controlled actor's attempted action using the supplied role and context. "
+                                      "You are not an autonomous planner or outcome authority.",
+                        user_prompt=str(actor_input["prompt"])), timeout=45)
                 return await execute_node(
                     node=node, node_input=actor_input,
                     context=execution_context if execution_context is not None else context, provider=self.provider,
@@ -799,14 +864,18 @@ class WorkflowEngine:
                 output = await admit_action(
                     provider=self.provider, runtime_input=runtime_input, evidence=consistency_evidence,
                     generate=generate, record=record_check,
-                    can_regenerate=node.type == "agent" and str(node.config.get("execution_mode", "builtin_llm")).strip().lower() == "builtin_llm",
+                    can_regenerate=not runtime_input.get("_player_request") and node.type == "agent" and str(node.config.get("execution_mode", "builtin_llm")).strip().lower() == "builtin_llm",
                 )
             else:
                 output = await generate(runtime_input)
+            if runtime_input.get("_player_request") and self._stop_requested(db, run_id):
+                raise PlayerTurnRejected("run_ended")
         except Exception as exc:
             duration = int((perf_counter() - start) * 1000)
-            error = {"type": type(exc).__name__, "message": str(exc).strip() or type(exc).__name__, "node_id": node.id}
-            node_run.status = "failed"
+            player = runtime_input.get("_player_request")
+            rejected = bool(player) and isinstance(exc, (ActionConsistencyError, ValueError, ProviderError, TimeoutError, PlayerTurnRejected))
+            error = {"type": type(exc).__name__, "message": "Player action was not admitted." if rejected else str(exc).strip() or type(exc).__name__, "node_id": node.id}
+            node_run.status = "skipped" if rejected else "failed"
             node_run.ended_at = datetime.now(timezone.utc)
             node_run.duration_ms = duration
             node_run.error_json = serialize(redact_secrets(error))
@@ -816,12 +885,17 @@ class WorkflowEngine:
                 db,
                 run_id,
                 node.id,
-                "failed",
+                "skipped" if rejected else "failed",
                 {"input": runtime_input, "output": {}, "error": error},
                 duration_ms=duration,
                 caused_by=caused_by,
                 prev_hash=last_event_hash,
             )
+            if rejected:
+                code = ("run_ended" if isinstance(exc, PlayerTurnRejected) else
+                        "action_conflict" if isinstance(exc, ActionConsistencyError) else "action_model_failed")
+                reject_pending_intervention(db, run_id, code)
+                raise PlayerTurnRejected(code) from exc
             raise
         duration = int((perf_counter() - start) * 1000)
         next_state = (
@@ -841,18 +915,25 @@ class WorkflowEngine:
         node_run.duration_ms = duration
         node_run.output_json = serialize(redact_secrets(output))
         db.add(node_run)
-        db.commit()
-        success_seq, last_event_hash = emit_event(
-            db,
-            run_id,
-            node.id,
-            "succeeded",
-            {"input": runtime_input, "output": output, "error": None, "simulation_state": next_state},
-            duration_ms=duration,
-            caused_by=caused_by,
-            parent_event_ids=[admission_seq] if admission_seq is not None else None,
-            prev_hash=last_event_hash,
-        )
+        with event_transaction(db):
+            success_seq, last_event_hash = emit_event(
+                db, run_id, node.id, "succeeded",
+                {"input": runtime_input, "output": output, "error": None, "simulation_state": next_state},
+                duration_ms=duration, caused_by=caused_by,
+                parent_event_ids=[admission_seq] if admission_seq is not None else None,
+                prev_hash=last_event_hash, commit=False,
+            )
+            player = runtime_input.get("_player_request")
+            if player:
+                packet = runtime_input["context"]
+                accepted = action_record(node, output, packet, success_seq, node_subject(node))
+                snapshot = continuous_snapshot(context, [*context.get("simulation_actions", []), accepted],
+                                               packet["round"] - 1, packet["action_index"], simulation_seq)
+                _, last_event_hash = emit_event(db, run_id, "player", "player_applied", {
+                    "request_seq": player["request_seq"], "request_id": player["request_id"],
+                    "actor_id": node.id, "action_event_seq": success_seq,
+                    "_rollback_snapshot": snapshot,
+                }, caused_by="player_action", parent_event_ids=[player["request_seq"], success_seq], commit=False)
         return output, duration, success_seq, last_event_hash
 
     async def run(
@@ -947,6 +1028,7 @@ class WorkflowEngine:
                 recent_actions=resume_actions if isinstance(resume_actions, list) else [],
             )
             try:
+                publish_restored_state(db, run, request, context)
                 return await self._run_continuous_simulation(
                     db=db,
                     workflow=workflow,
@@ -970,6 +1052,8 @@ class WorkflowEngine:
                 emit_event(db, run_id, "run_control", "failed", {"error": error}, caused_by="continuous_failure",
                            prev_hash=load_last_event_hash(db, run_id)[1])
                 return run_id
+            finally:
+                reject_pending_intervention(db, run_id)
         human_resume_emitted = False
         pending_human_at_start = context.get("_human_response")
         if isinstance(pending_human_at_start, dict):

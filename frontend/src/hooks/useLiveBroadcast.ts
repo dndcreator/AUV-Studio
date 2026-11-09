@@ -34,6 +34,7 @@ export function useLiveBroadcast(
     );
     return buildGlimpseRows(events).map((row) => ({ ...row, speaker: labels.get(row.speaker) ?? row.speaker }));
   }, [events, nodes, lang]);
+  const playable = useMemo(() => rows.filter(row => row.event !== "inherited"), [rows]);
 
   const current = useMemo(() => snapshot[snapshot.length - 1] ?? null, [snapshot]);
   const broadcastRows = useMemo(
@@ -52,16 +53,16 @@ export function useLiveBroadcast(
   }, []);
 
   useEffect(() => {
-    if (rows.length < cursorRef.current) {
+    if (playable.length < cursorRef.current) {
       cursorRef.current = 0;
       setSnapshot([]);
     }
-    rowsRef.current = rows;
+    rowsRef.current = playable;
     if (playback === "sync") {
-      cursorRef.current = rows.length;
-      setSnapshot(rows.slice(-30));
+      cursorRef.current = playable.length;
+      setSnapshot(playable.slice(-30));
     }
-  }, [rows, playback]);
+  }, [playable, playback]);
 
   useEffect(() => {
     if (playback !== "paced") return;

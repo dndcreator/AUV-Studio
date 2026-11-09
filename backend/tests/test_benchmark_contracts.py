@@ -79,7 +79,7 @@ def test_keyword_stuffing_cannot_certify_long_horizon_quality():
 def test_cases_cover_all_capabilities_and_gold_labels_are_not_claimed_human_reviewed():
     _, cases = load_cases()
     gold, standards = load_cases(True)
-    assert {row["capability"] for row in cases} == set(RUBRICS)
+    assert {row["capability"] for row in [*cases, *load_cases(suite="visual")[1]]} == set(RUBRICS)
     for capability in RUBRICS:
         assert {"pass", "fail"}.issubset({row["label"] for row in standards if row["capability"] == capability})
     assert gold["review_status"] == "pending_human" and not gold["reviewed_by"]

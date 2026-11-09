@@ -78,11 +78,28 @@
 .scene-actor.status-failed .scene-actor-status i { background: #b1392c; }
 .spatial-scene-scroll { width: 100%; height: 100%; overflow: auto; }
 .spatial-scene { position: relative; }
+.scene-decoration { position: absolute; inset: 0; pointer-events: none; }
+.spatial-actor { transition: left 650ms ease, top 650ms ease; }
 .scene-region { position: absolute; padding: 14px; border: 2px solid var(--scene-accent, #b5a351); border-radius: 12px; background: rgb(255 255 255 / 4%); color: var(--scene-accent, #e5d18a); }
 .scene-region > strong { font-size: 12px; font-weight: 600; }
 .spatial-actor { position: absolute; }
 .director-composer { position: relative; z-index: 6; display: flex; align-items: center; gap: 12px; flex-shrink: 0; margin: 14px 22px 22px; padding: 12px 14px; border: 2px solid #11110d; border-radius: 7px; background: #fff9d9; box-shadow: 4px 4px 0 #000; }
 .composer-symbol { color: #9a7918; }
+.composer-mode { width: auto; max-width: 120px; flex-shrink: 0; padding: 7px; border: 1px solid #cdbf7f; border-radius: 4px; background: #f4e9b7; color: #11110d; font: inherit; font-size: 12px; }
+.director-composer { flex-wrap: wrap; }
+.director-composer textarea { min-width: min(240px, 100%); }
+.composer-actor-control { display: flex; align-items: center; gap: 6px; max-width: 100%; font-size: 11px; }
+.composer-actor-control select { max-width: 140px; color: #11110d; background: #fff9d9; border: 1px solid #cdbf7f; padding: 7px; }
+.composer-actor-control .btn { padding: 7px 9px; white-space: nowrap; }
+.actor-control-badge { margin-left: auto; padding: 4px 6px; border: 1px solid currentColor; font-size: 10px; white-space: nowrap; }
+.intervention-history-card { width: min(860px, calc(100vw - 32px)); }
+.intervention-history-row { padding: 18px 0; border-bottom: 1px solid #cdbf7f; }
+.intervention-history-row header, .intervention-history-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.intervention-history-row time { margin-left: auto; font-size: 11px; opacity: .7; }
+.intervention-history-row p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+.intervention-state { padding: 3px 7px; border: 1px solid currentColor; font-size: 11px; }
+.intervention-state.rejected, .intervention-error { color: #a12d20; }
+.intervention-history-actions .btn { margin: 0; }
 .director-composer textarea { flex: 1; min-width: 0; max-height: 100px; min-height: 36px; resize: vertical; padding: 7px 0; border: 0; background: transparent; color: #11110d; font: inherit; font-size: 13px; line-height: 1.65; box-shadow: none; }
 .director-composer textarea:focus { outline: none; }
 .composer-send { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; padding: 0; border: 1px solid #cdbf7f; border-radius: 4px; background: #f4e9b7; color: #4e4426; cursor: pointer; }

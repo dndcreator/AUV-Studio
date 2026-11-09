@@ -15,13 +15,14 @@ os.environ["AUV_DATABASE_URL"] = "sqlite:///" + (Path(_isolated.name) / "suite.d
 os.environ["AUV_MEDIA_OUTPUT_DIR"] = (Path(_isolated.name) / "media").as_posix()
 
 UNIT_FILES = {
+    "test_visual_director.py",
     "test_action_consistency.py", "test_action_evidence.py", "test_action_output.py", "test_behavior_validation.py",
     "test_context_book.py", "test_dynamic_state.py", "test_entity_contracts.py", "test_evaluation.py",
     "test_evidence.py", "test_launcher.py", "test_long_horizon_evaluation.py", "test_narrative_fidelity.py",
     "test_perception.py", "test_plan_generation.py", "test_scene_control.py", "test_simulation_contract_repairs.py",
     "test_state_coding.py", "test_writing_evaluation.py", "test_benchmark_contracts.py", "test_gold_cases.py",
 }
-INTEGRATION_FILES = {"test_api_integration.py", "test_api_surface.py", "test_engine.py", "test_human_api.py",
+INTEGRATION_FILES = {"test_player_actions.py", "test_player_interventions.py", "test_api_integration.py", "test_api_surface.py", "test_engine.py", "test_human_api.py",
                      "test_media.py", "test_provider.py", "test_queue_manager.py", "test_report_material.py", "test_run_recovery.py"}
 INTEGRATION_CASES = {
     "test_real_engine_admits_only_checked_actions_and_keeps_rejected_candidates_out_of_memory_and_reports",
@@ -52,7 +53,8 @@ INTEGRATION_CASES = {
     "test_incomplete_system_never_generates_deliverable",
     "test_report_failure_preserves_actions_and_stops_judge_calls",
 }
-UNIT_CASES = {"test_cycle_validation", "test_memory_write_trigger_filters_trivial_facts"}
+UNIT_CASES = {"test_cycle_validation", "test_memory_write_trigger_filters_trivial_facts",
+              "test_ordinary_actor_cannot_forge_player_outcome_authority"}
 
 
 def pytest_configure(config):

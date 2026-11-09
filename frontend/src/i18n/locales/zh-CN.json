@@ -1,6 +1,28 @@
 {
+  "intervention": {
+    "action": "尝试行动", "actionPlaceholder": "让这个角色尝试做什么？", "actor": "行动角色", "chooseActor": "选择角色",
+    "takeover": "接管", "release": "归还控制", "handoff": "交接中", "playerControlled": "玩家接管", "waiting": "等待玩家",
+    "actionQueued": "行动已排队", "actionApplied": "角色行动已记录", "control": "控制权",
+    "history": "干预记录", "historyFailed": "无法加载干预记录", "noHistory": "暂无干预",
+    "trace": "追溯", "branchBefore": "从之前分支", "branchAfter": "从这里继续", "override": "覆盖当前事实",
+    "confirmOverwrite": "确认覆盖冲突的当前事实？", "more": "加载更多",
+    "status": { "queued": "排队中", "running": "处理中", "applied": "已应用", "rejected": "未应用" },
+    "mode": "输入模式", "director": "导演指导", "outcome": "指定结果", "placeholder": "让这个世界发生什么？",
+    "queued": "结果已排队", "applied": "结果已生效", "failed": "结果未生效",
+    "unavailable": "暂时无法提交，请刷新运行后重试。",
+    "errors": {
+      "control_changed": "控制权已变化，请重新提交行动。", "action_conflict": "行动未通过检查，请修改尝试。",
+      "action_model_failed": "行动处理失败，未提交任何行动。",
+      "state_version_conflict": "世界状态已变化，请确认后重新提交。",
+      "outcome_conflict": "结果与已有事实冲突，请修改指令或创建分支。",
+      "outcome_patch_rejected": "状态校验失败，未应用结果。",
+      "outcome_model_failed": "模型请求失败，未应用结果。",
+      "outcome_context_too_large": "世界上下文超出干预上限。", "run_ended": "运行已结束，结果未应用。"
+    }
+  },
   "subtitle": "可视化多智能体模拟器",
   "journey": {
+    "visualize": "生成视觉场景", "visualFailed": "视觉生成失败，原场景已保留",
     "applyEdit": "应用并编辑",
     "home": "首页", "workspaceView": "工作区视图", "scene": "场景", "editor": "编辑器",
     "projects": "项目", "settings": "设置", "whatToSimulate": "你想模拟什么？",

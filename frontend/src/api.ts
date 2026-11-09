@@ -1,3 +1,4 @@
+import type { ActorControl, InterventionHistory, InterventionRequest, PlayerStatus } from "./playerTypes";
 import type {
   AuditVerify,
   DirectorCapability,
@@ -79,6 +80,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  generatePresentation: (payload: { workflow: WorkflowDefinition; run_id?: string }) =>
+    request<import("./scene/presentation").ScenePresentation>("/presentation/generate", { method: "POST", body: JSON.stringify(payload) }),
   parseEvidence: async (file: File): Promise<EvidencePack> => {
     const res = await fetch(`${API_BASE}/evidence/parse`, {
       method: "POST",
@@ -186,6 +189,14 @@ export const api = {
       method: "POST"
     }),
   getRun: (runId: string) => request<RunDetail>(`/runs/${runId}`),
+  getInterventionStatus: (runId: string) => request<PlayerStatus>(`/runs/${runId}/interventions`),
+  submitIntervention: (runId: string, body: InterventionRequest) => request<{ request_id: string; request_seq: number; status: string }>(`/runs/${runId}/interventions`, {
+    method: "POST", body: JSON.stringify(body),
+  }),
+  setActorControl: (runId: string, body: { actor_id: string; control: ActorControl; request_id: string }) =>
+    request<{ request_id: string; status: string }>(`/runs/${runId}/controls`, { method: "POST", body: JSON.stringify(body) }),
+  getInterventionHistory: (runId: string, beforeSeq?: number) => request<InterventionHistory>(
+    `/runs/${runId}/interventions/history?limit=30${beforeSeq ? `&before_seq=${beforeSeq}` : ""}`),
   getRunStatus: (runId: string, signal?: AbortSignal) =>
     request<{ run_id: string; status: RunDetail["status"] }>(`/runs/${runId}/status`, { signal }),
   getRunEvents: (runId: string, afterSeq: number, signal?: AbortSignal) =>

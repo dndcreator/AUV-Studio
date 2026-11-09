@@ -61,6 +61,106 @@ async function generate() {
 }
 
 describe("integrated studio journey", () => {
+  it("sends an actor attempt through the gateway and allows control handoff without replacing Director guidance", async () => {
+    vi.mocked(api.compileTemplate).mockResolvedValue({ ...structuredClone(draft), workflow: { ...structuredClone(definition),
+      environment: { ...definition.environment, simulation: { execution_model: "continuous" } } } });
+    const controls: Record<string, "autonomous" | "player_controlled"> = {};
+    vi.spyOn(api, "getInterventionStatus").mockImplementation(async () => ({ run_id: "r", state_version: 3,
+      enabled: true, accepts_actions: true, accepts_outcomes: true, pending_request_id: null, controls: { ...controls }, handoffs: {}, waiting_actor_ids: [] }));
+    vi.spyOn(api, "setActorControl").mockImplementation(async (_run, body) => { controls[body.actor_id] = body.control; return { request_id: body.request_id, status: "handoff" }; });
+    vi.spyOn(api, "submitIntervention").mockResolvedValue({ request_id: "try", request_seq: 3, status: "queued" });
+    mount(); await generate();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm & start" }));
+    fireEvent.change(await screen.findByLabelText("Input mode"), { target: { value: "action" } });
+    fireEvent.change(screen.getByLabelText("Acting character"), { target: { value: "a" } });
+    fireEvent.click(screen.getByRole("button", { name: "Take over" }));
+    await screen.findByRole("button", { name: "Return control" });
+    fireEvent.change(screen.getByLabelText("Attempt action"), { target: { value: "Try to repair the hatch." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(api.submitIntervention).toHaveBeenCalledWith("r", expect.objectContaining({ mode: "action", actor_id: "a", base_state_version: 3 })));
+    fireEvent.change(screen.getByLabelText("Input mode"), { target: { value: "director" } });
+    expect(screen.getByLabelText("Message the Director")).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Return control" }));
+    await waitFor(() => expect(api.setActorControl).toHaveBeenLastCalledWith("r", expect.objectContaining({ actor_id: "a", control: "autonomous" })));
+  });
+  it("opens intervention history and submits an explicitly confirmed current-fact override", async () => {
+    vi.mocked(api.compileTemplate).mockResolvedValue({ ...structuredClone(draft), workflow: { ...structuredClone(definition),
+      environment: { ...definition.environment, simulation: { execution_model: "continuous" } } } });
+    vi.spyOn(api, "getInterventionStatus").mockResolvedValue({ run_id: "r", state_version: 9, enabled: true,
+      accepts_actions: true, accepts_outcomes: true, pending_request_id: null, controls: {}, handoffs: {}, waiting_actor_ids: [] });
+    vi.spyOn(api, "submitIntervention").mockResolvedValue({ request_id: "overwrite", request_seq: 40, status: "queued" });
+    vi.spyOn(api, "getInterventionHistory").mockResolvedValue({ run_id: "r", next_before_seq: null, items: [{
+      request_seq: 20, request_id: "old", mode: "outcome", instruction: "The hatch is open.", timestamp: "2026-11-06T00:00:00Z",
+      status: "rejected", code: "outcome_conflict", event_seq: 21, before_checkpoint_seq: 19, after_checkpoint_seq: null,
+    }] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mount(); await generate();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm & start" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Interventions" }));
+    const history = await screen.findByRole("dialog", { name: "Interventions" });
+    fireEvent.click(await within(history).findByRole("button", { name: "Override current facts" }));
+    await waitFor(() => expect(api.submitIntervention).toHaveBeenCalledWith("r", expect.objectContaining({
+      mode: "outcome", instruction: "The hatch is open.", base_state_version: 9, conflict_policy: "overwrite",
+    })));
+    expect(window.confirm).toHaveBeenCalledOnce();
+  });
+  it("queues a world outcome separately from Director guidance without claiming it already applied", async () => {
+    vi.mocked(api.compileTemplate).mockResolvedValue({ ...structuredClone(draft), workflow: { ...structuredClone(definition),
+      environment: { ...definition.environment, simulation: { ui_mode: "roleplay", execution_model: "continuous" } } } });
+    vi.spyOn(api, "getInterventionStatus").mockResolvedValue({ run_id: "r", state_version: 7, enabled: true,
+      accepts_outcomes: true, accepts_actions: true, controls: {}, handoffs: {}, waiting_actor_ids: [], pending_request_id: null });
+    vi.spyOn(api, "submitIntervention").mockResolvedValue({ request_id: "queued", request_seq: 20, status: "queued" });
+    mount(); await generate();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm & start" }));
+    const mode = await screen.findByLabelText("Input mode");
+    fireEvent.change(mode, { target: { value: "outcome" } });
+    fireEvent.change(screen.getByLabelText("World outcome"), { target: { value: "The engineer reaches the engine room." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(api.submitIntervention).toHaveBeenCalledWith("r", expect.objectContaining({
+      mode: "outcome", instruction: "The engineer reaches the engine room.", base_state_version: 7,
+    })));
+    expect(api.sendDirectorCommand).not.toHaveBeenCalled();
+    expect(await screen.findByText("Outcome queued")).toBeInTheDocument();
+    expect(screen.queryByText("Outcome applied")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Stop/ }));
+    await waitFor(() => expect(api.stopRun).toHaveBeenCalledWith("r"));
+  });
+  it("shows a later version conflict and releases the outcome input for correction", async () => {
+    vi.mocked(api.compileTemplate).mockResolvedValue({ ...structuredClone(draft), workflow: { ...structuredClone(definition),
+      environment: { ...definition.environment, simulation: { execution_model: "continuous" } } } });
+    vi.spyOn(api, "getInterventionStatus").mockResolvedValue({ run_id: "r", state_version: 1, enabled: true,
+      accepts_outcomes: true, accepts_actions: true, controls: {}, handoffs: {}, waiting_actor_ids: [], pending_request_id: null });
+    let queued = false;
+    vi.spyOn(api, "submitIntervention").mockImplementation(async () => {
+      queued = true; return { request_id: "conflict", request_seq: 21, status: "queued" };
+    });
+    vi.mocked(api.getRunEvents).mockImplementation(async () => ({ run_id: "r", events: queued ? [{
+      seq: 22, run_id: "r", node_id: "player", event: "player_rejected", timestamp: "2026-11-06T00:00:00Z",
+      payload: { request_id: "conflict", code: "state_version_conflict" },
+    }] : [] }));
+    mount(); await generate();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm & start" }));
+    fireEvent.change(await screen.findByLabelText("Input mode"), { target: { value: "outcome" } });
+    fireEvent.change(screen.getByLabelText("World outcome"), { target: { value: "Move the engineer." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("The world changed. Review it and submit again.", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByLabelText("World outcome")).not.toBeDisabled();
+    expect(screen.queryByText("Outcome applied")).not.toBeInTheDocument();
+  });
+  it("generates visuals only on request and keeps them separate from actors and execution", async () => {
+    const generateVisual = vi.spyOn(api, "generatePresentation").mockResolvedValue({ version: 1, renderer: "spatial", theme: { accent: "#FF8800" },
+      regions: [{ id: "room", label: "Room", x: 0, y: 0, width: 600, height: 400 }], placements: [], assets: [] });
+    mount(); await generate();
+    expect(generateVisual).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Generate visual scene" }));
+    await waitFor(() => expect(document.querySelector(".scene-region")).toBeInTheDocument());
+    expect(api.runWorkflow).not.toHaveBeenCalled();
+    expect(useWorkflowStore.getState().workflow.id).toBe("original");
+    fireEvent.click(screen.getByRole("button", { name: "Apply & open editor" }));
+    await waitFor(() => expect(useWorkflowStore.getState().workflow.id).toBe("draft_project"));
+    expect(useWorkflowStore.getState().nodes).toHaveLength(2);
+    expect(useWorkflowStore.getState().workflow.environment.simulation?.presentation).toHaveProperty("renderer", "spatial");
+  });
   it("goes from a quiet home to a staged draft, then starts, intervenes and stops through existing APIs", async () => {
     mount();
     expect(screen.getByRole("heading", { name: "What would you like to simulate?" })).toBeInTheDocument();

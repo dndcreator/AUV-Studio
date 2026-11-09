@@ -28,6 +28,17 @@ RunEventType = Literal[
     "dynamic_state_updated",
     "dynamic_state_failed",
     "action_checked",
+    "player_requested",
+    "player_outcome",
+    "player_applied",
+    "player_rejected",
+    "player_control_requested",
+    "player_control_changed",
+    "player_control_rejected",
+    "player_waiting",
+    "player_action_started",
+    "state_restored",
+    "player_checkpoint",
 ]
 RunStatus = Literal["pending", "running", "waiting_human", "stopping", "stopped", "succeeded", "failed"]
 

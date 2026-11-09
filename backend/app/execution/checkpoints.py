@@ -5,6 +5,7 @@ from typing import Any
 
 from ..schemas import RunRequest, WorkflowEdge, WorkflowNode
 from .simulation_state import normalize_simulation_state
+from .events import emit_event
 
 
 def build_context_snapshot(
@@ -82,6 +83,8 @@ def continuous_snapshot(
         "action_index": action_index,
         "simulation_seq": simulation_seq,
         "scene_control": copy.deepcopy(context.get("_scene_control", {})),
+        "player_controls": copy.deepcopy(context.get("_player_controls", {})),
+        "player_control_cursor": context.get("_player_control_cursor", 0),
     }
 
 
@@ -95,9 +98,20 @@ def restore_continuous_checkpoint(context: dict[str, Any], request: RunRequest) 
         context["_simulation"] = normalize_simulation_state(simulation_state)
     if isinstance(snapshot.get("scene_control"), dict):
         context["_scene_control"] = copy.deepcopy(snapshot["scene_control"])
+    context["_player_controls"] = copy.deepcopy(snapshot.get("player_controls", {}))
+    context["_player_control_cursor"] = int(snapshot.get("player_control_cursor", 0) or 0)
     context["_continuous_resume"] = {
         "actions": snapshot.get("actions", []) if isinstance(snapshot.get("actions"), list) else [],
         "round": int(snapshot.get("round", 0) or 0),
         "action_index": int(snapshot.get("action_index", 0) or 0),
         "simulation_seq": int(snapshot.get("simulation_seq", 0) or 0),
     }
+
+
+def record_player_checkpoint(db, run_id: str, request: dict[str, Any], context: dict[str, Any],
+                             actions: list[dict[str, Any]], round_index: int, action_index: int,
+                             simulation_seq: int, *, commit: bool = True) -> None:
+    emit_event(db, run_id, "player", "player_checkpoint", {
+        "request_seq": request["request_seq"], "request_id": request["request_id"],
+        "_rollback_snapshot": continuous_snapshot(context, actions, round_index - 1, action_index, simulation_seq),
+    }, caused_by="before_player_intervention", parent_event_ids=[request["request_seq"]], commit=commit)

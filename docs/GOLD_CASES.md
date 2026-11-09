@@ -1,5 +1,7 @@
 # Gold Cases 与跨模块任务
 
+2026-11-01补充：独立 `visual` 套件增加地牢/飞船两例，主套件41例不变；Judge校准样本增加视觉正反例后共19例，均仍待人工确认。通过 `app.behavior_eval --suite visual` 显式选择，默认不调用模型。真实试验及费用见 [VISUAL_EVALUATION.md](VISUAL_EVALUATION.md)。
+
 更新：2026-10-29。`backend/evals/behavior_cases.json` v2包含7项独立能力各5例，以及6项系统任务，共41例。本轮增加19项能力案例和3项短系统任务，原有案例也补齐判据。17项Judge校准样本单独维护，不与能力案例混算覆盖。
 
 ## 每项五例的风险分布

@@ -60,7 +60,10 @@ def build_consistency_evidence(
         for row in packet.get("recent_actions", [])]
     actor_state = packet.get("state", {})
     actor_view["visible_dynamic_ids"] = list(actor_state.get("dynamic_state", {}).get("values", {}))
-    add("actor.input", "actual_input", {"context": actor_view, "role": runtime_input.get("role", {})})
+    actual_input = {"context": actor_view, "role": runtime_input.get("role", {})}
+    if runtime_input.get("_player_request"):
+        actual_input["player_request"] = {key: runtime_input["_player_request"][key] for key in ("instruction", "control")}
+    add("actor.input", "actual_input", actual_input)
     return evidence
 
 

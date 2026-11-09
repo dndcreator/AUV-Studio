@@ -52,6 +52,12 @@ class EvalUsage:
 
 
 class BudgetedProvider:
+    def with_visual_mode(self) -> BudgetedProvider:
+        scoped = copy.copy(self)
+        if hasattr(self.provider, "with_visual_mode"):
+            scoped.provider = self.provider.with_visual_mode()
+        return scoped
+
     def with_provider(self, provider: Any) -> BudgetedProvider:
         """An independent judge context shares the same physical-attempt budget, never a fresh allowance."""
         scoped = copy.copy(self)
@@ -141,7 +147,7 @@ class BudgetedProvider:
         return response
 
     def _record_usage(self, system: str, input_tokens: int, output_tokens: int, *, failed: bool = False) -> None:
-        categories = {"independent evidence-based regression judge": "judge", "fixed criteria": "judge",
+        categories = {"Visual Director": "visual", "independent evidence-based regression judge": "judge", "fixed criteria": "judge",
                       "action consistency checker": "action_check", "literary fidelity checker": "writing_check",
                       "process architect": "planning", "route attention": "routing", "continuity auditor": "audit",
                       "State Coder repairing": "state_repair", "autonomous participant": "actor", "finished literary work": "writing"}

@@ -34,6 +34,14 @@ def actor_input(payload: dict[str, Any]) -> tuple[WorkflowNode, dict[str, Any]]:
 
 async def run_target(case: dict[str, Any], provider: Any) -> Any:
     kind, payload = case["capability"], case["input"]
+    if kind == "visual":
+        from ..visual_director import generate_visual
+        from ..schemas import WorkflowDefinition
+        from ..execution.dynamic_state import compact_dynamic_state
+        workflow = WorkflowDefinition.model_validate(payload["workflow"])
+        public_state = compact_dynamic_state(payload.get("state", {}))
+        plan = await generate_visual(provider, workflow, public_state)
+        return {"presentation": plan.model_dump(mode="json"), "public_state": public_state}
     if kind == "planning":
         compiled = await compile_workflow_from_plan(provider, PlanCompileRequest.model_validate(payload))
         workflow = compiled.workflow.model_dump(mode="json")

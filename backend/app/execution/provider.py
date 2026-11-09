@@ -71,6 +71,13 @@ class OpenAICompatibleProvider:
         scoped.max_output_tokens = limit
         return scoped
 
+    def with_visual_mode(self) -> OpenAICompatibleProvider:
+        scoped = copy.copy(self)
+        if (urlsplit(self.base_url).hostname or "").lower() == "api.deepseek.com" and self.default_model in {
+            "deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"}:
+            scoped.thinking_mode = "disabled"
+        return scoped
+
     def configure(
         self,
         *,

@@ -18,6 +18,14 @@ from app.schemas import EnvironmentSpec, RunRequest, WorkflowDefinition, Workflo
 from app.service import verify_run_audit
 
 
+def test_checkpoint_transport_never_becomes_participant_or_external_input():
+    context = {"input": {"task": "public", "_rollback": {"private": "SECRET-OTHER-OWNER"},
+                         "_human_response": {"internal": "SECRET-RESUME"}}}
+    view = participant_context(context, state={}, memories=[], background={}, actions=[], guidance="")
+    assert view["input"] == {"task": "public"} and "SECRET" not in json.dumps(view)
+    assert "_rollback" in context["input"]
+
+
 def sample_action():
     return {"node_id": "a", "actor": "A", "participation": "act", "action": "PUBLIC_FINDING", "action_index": 1, "event_seq": 2,
             "intent": "SECRET_INTENT", "observation": "SECRET_OBSERVATION", "self_update": "SECRET_STATE",

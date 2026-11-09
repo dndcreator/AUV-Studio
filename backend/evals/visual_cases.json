@@ -1,0 +1,185 @@
+{
+  "version": 2,
+  "cases": [
+    {
+      "id": "visual_dungeon",
+      "capability": "visual",
+      "kind": "positive",
+      "estimated_calls": 1,
+      "requirements": "Generate a clearly themed, readable schematic, preserve supplied public bindings and do not invent actions. Region labels must include the supplied start and destination names.",
+      "input": {
+        "workflow": {
+          "id": "visual_dungeon",
+          "name": "地牢求生",
+          "version": 1,
+          "entry_nodes": [
+            "a"
+          ],
+          "nodes": [
+            {
+              "id": "a",
+              "type": "agent",
+              "position": {
+                "x": 0,
+                "y": 0
+              },
+              "config": {
+                "entity_name": "主角",
+                "entity_type": "individual"
+              },
+              "inputs": {}
+            },
+            {
+              "id": "b",
+              "type": "agent",
+              "position": {
+                "x": 300,
+                "y": 0
+              },
+              "config": {
+                "entity_name": "协作角色",
+                "entity_type": "individual"
+              },
+              "inputs": {}
+            }
+          ],
+          "edges": [],
+          "environment": {
+            "scenario": "囚徒和守卫身处地牢入口。画面包含石墙、火把和两个相连房间，阴暗石色和暖火光。囚徒最初在入口。 区域名称固定为：入口、深室。将公共概念 position 的值 深室 绑定为主角 a 移动至对应房间，将 alarm 的值 on 绑定到警示图元的红色。",
+            "simulation": {}
+          }
+        },
+        "state": {
+          "enabled": true,
+          "concepts": {
+            "position": {
+              "id": "position",
+              "status": "active",
+              "visibility": "global",
+              "subject_id": "a",
+              "scope": "global",
+              "value_type": "text"
+            },
+            "alarm": {
+              "id": "alarm",
+              "status": "active",
+              "visibility": "global",
+              "scope": "global",
+              "value_type": "text"
+            }
+          },
+          "values": {}
+        },
+        "destination": "深室"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Distinct requested motif expressed in palette and geometry.",
+          "Declared bindings reference position/alarm with valid targets."
+        ],
+        "fail_conditions": [
+          "Invented actor outcome or private knowledge.",
+          "Only generic boxes without requested visual motifs."
+        ],
+        "allowed_variants": [
+          "Any readable SVG primitive composition matching the setting."
+        ],
+        "contrast_example": "The same unthemed graph recolored with no relevant decorative geometry.",
+        "origin": "Visual Director POC acceptance request"
+      }
+    },
+    {
+      "id": "visual_ship",
+      "capability": "visual",
+      "kind": "positive",
+      "estimated_calls": 1,
+      "requirements": "Generate a clearly themed, readable schematic, preserve supplied public bindings and do not invent actions. Region labels must include the supplied start and destination names.",
+      "input": {
+        "workflow": {
+          "id": "visual_ship",
+          "name": "太空船故障",
+          "version": 1,
+          "entry_nodes": [
+            "a"
+          ],
+          "nodes": [
+            {
+              "id": "a",
+              "type": "agent",
+              "position": {
+                "x": 0,
+                "y": 0
+              },
+              "config": {
+                "entity_name": "主角",
+                "entity_type": "individual"
+              },
+              "inputs": {}
+            },
+            {
+              "id": "b",
+              "type": "agent",
+              "position": {
+                "x": 300,
+                "y": 0
+              },
+              "config": {
+                "entity_name": "协作角色",
+                "entity_type": "individual"
+              },
+              "inputs": {}
+            }
+          ],
+          "edges": [],
+          "environment": {
+            "scenario": "船长和工程师在飞船舰桥，工程舱位于右侧。画面要有舱室、管线和警报灯，冷色金属和红色警报。船长最初在舰桥。 区域名称固定为：舰桥、工程舱。将公共概念 position 的值 工程舱 绑定为主角 a 移动至对应房间，将 alarm 的值 on 绑定到警示图元的红色。",
+            "simulation": {}
+          }
+        },
+        "state": {
+          "enabled": true,
+          "concepts": {
+            "position": {
+              "id": "position",
+              "status": "active",
+              "visibility": "global",
+              "subject_id": "a",
+              "scope": "global",
+              "value_type": "text"
+            },
+            "alarm": {
+              "id": "alarm",
+              "status": "active",
+              "visibility": "global",
+              "scope": "global",
+              "value_type": "text"
+            }
+          },
+          "values": {}
+        },
+        "destination": "工程舱"
+      },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "reviewed_by": "",
+        "pass_conditions": [
+          "Distinct requested motif expressed in palette and geometry.",
+          "Declared bindings reference position/alarm with valid targets."
+        ],
+        "fail_conditions": [
+          "Invented actor outcome or private knowledge.",
+          "Only generic boxes without requested visual motifs."
+        ],
+        "allowed_variants": [
+          "Any readable SVG primitive composition matching the setting."
+        ],
+        "contrast_example": "The same unthemed graph recolored with no relevant decorative geometry.",
+        "origin": "Visual Director POC acceptance request"
+      }
+    }
+  ]
+}

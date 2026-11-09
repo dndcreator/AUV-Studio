@@ -65,7 +65,11 @@ def participant_context(
     context: dict[str, Any], *, state: dict[str, Any], memories: list[dict[str, Any]],
     background: dict[str, Any], actions: list[dict[str, Any]], guidance: str,
 ) -> dict[str, Any]:
-    result = {"input": context.get("input", {}), "_run": context.get("_run", {}),
+    # Recovery envelopes can contain every owner's private state. They are engine
+    # transport, not participant input or something an external adapter may read.
+    inputs = context.get("input", {})
+    inputs = {key: value for key, value in inputs.items() if key not in {"_rollback", "_human_response"}} if isinstance(inputs, dict) else {}
+    result = {"input": inputs, "_run": context.get("_run", {}),
               "_environment": context.get("_runtime_environment", {}),
               "_runtime_environment": context.get("_runtime_environment", {}),
               "_simulation": state, "_memory": memories, "_context_pack": background, "_global_guidance": guidance}

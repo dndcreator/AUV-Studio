@@ -1,13 +1,39 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import wraps
+from threading import RLock
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..audit import append_trace_to_payload
+from ..audit import append_trace_to_payload, load_last_event_hash
 from ..models import NodeRunRecord, RunEventRecord
+
+
+_event_write_lock = RLock()
+
+
+@contextmanager
+def event_transaction(db: Session):
+    """One local runtime owns writes; never hold this synchronous lock across an await."""
+    with _event_write_lock:
+        try:
+            yield
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+
+
+def _serialized_event(function):
+    @wraps(function)
+    def write(*args, **kwargs):
+        with _event_write_lock:
+            return function(*args, **kwargs)
+    return write
 
 
 def serialize(value: Any) -> str:
@@ -50,6 +76,7 @@ def redact_secrets(value: Any) -> Any:
     return value
 
 
+@_serialized_event
 def emit_event(
     db: Session,
     run_id: str,
@@ -63,7 +90,13 @@ def emit_event(
     caused_by: str = "engine",
     context_snapshot: dict[str, Any] | None = None,
     prev_hash: str = "",
+    commit: bool = True,
 ) -> tuple[int, str]:
+    # API commands can arrive while a model is awaited. Sign against the actual head,
+    # not the engine's now-stale cached hash. flush also exposes an atomic batch's head.
+    db.flush()
+    _, current_hash = load_last_event_hash(db, run_id)
+    prev_hash = current_hash or prev_hash
     now = datetime.now(timezone.utc)
     event_payload = redact_secrets(payload)
     # Internal checkpoints contain domain state, not transport configuration.
@@ -92,7 +125,10 @@ def emit_event(
         payload_json=serialize(signed_payload),
     )
     db.add(record)
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(record)
     return int(record.seq), event_hash
 

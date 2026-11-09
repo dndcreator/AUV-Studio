@@ -22,7 +22,12 @@ from .execution.provider import ProviderError, build_provider
 from .narrative_fidelity import NarrativeFidelityError
 from .plan_generation import PlanGenerationError
 from .evidence import MAX_UPLOAD_BYTES, parse_evidence_upload
-from .models import RunRecord
+from .models import RunRecord, RunEventRecord
+from .visual_director import VisualRequest, VisualPlan, generate_visual
+from .player_interventions import PlayerIntervention, enqueue_intervention, intervention_status
+from .player_controls import ControlRequest, request_control
+from .player_history import intervention_history
+from .execution.dynamic_state import compact_dynamic_state
 from .media_service import (
     MediaServiceError,
     download_media_asset,
@@ -324,6 +329,30 @@ def create_template_api(body: TemplateCreateRequest, db: Session = Depends(get_d
     return create_or_update_template(db, body)
 
 
+@app.post("/api/presentation/generate", response_model=VisualPlan)
+async def generate_presentation_api(body: VisualRequest, db: Session = Depends(get_db)) -> VisualPlan:
+    public_state: dict[str, Any] = {}
+    if body.run_id:
+        run = db.get(RunRecord, body.run_id)
+        if run is None or run.workflow_id != body.workflow.id:
+            raise HTTPException(status_code=404, detail="Matching run not found")
+        events = db.query(RunEventRecord).filter(RunEventRecord.run_id == body.run_id,
+                    RunEventRecord.event == "dynamic_state_updated").order_by(RunEventRecord.seq.desc())
+        for event in events:
+            payload = json.loads(event.payload_json)
+            if payload.get("coding", {}).get("status") == "pending":
+                continue
+            public_state = compact_dynamic_state(payload.get("dynamic_state", {}))
+            break
+    try:
+        async with asyncio.timeout(90):
+            return await generate_visual(provider, body.workflow, public_state)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Visual generation timed out; previous scene retained") from exc
+    except (ValueError, ProviderError) as exc:
+        raise HTTPException(status_code=502, detail="Visual generation failed; previous scene retained") from exc
+
+
 @app.post("/api/templates/compile", response_model=PlanCompileResponse)
 async def compile_template_api(request: PlanCompileRequest) -> PlanCompileResponse:
     try:
@@ -554,6 +583,27 @@ async def human_response_api(run_id: str, body: HumanResponseRequest, db: Sessio
 @app.post("/api/runs/{run_id}/director-command", response_model=DirectorCommandResponse)
 def director_command_api(run_id: str, body: DirectorCommandRequest, db: Session = Depends(get_db)) -> DirectorCommandResponse:
     return apply_director_command(db=db, run_id=run_id, req=body)
+
+
+@app.get("/api/runs/{run_id}/interventions")
+def player_intervention_status_api(run_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    return intervention_status(db, run_id)
+
+
+@app.post("/api/runs/{run_id}/interventions", status_code=202)
+def player_intervention_api(run_id: str, body: PlayerIntervention, db: Session = Depends(get_db)) -> dict[str, Any]:
+    return enqueue_intervention(db, run_id, body)
+
+
+@app.post("/api/runs/{run_id}/controls", status_code=202)
+def player_control_api(run_id: str, body: ControlRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    return request_control(db, run_id, body)
+
+
+@app.get("/api/runs/{run_id}/interventions/history")
+def player_history_api(run_id: str, before_seq: int | None = Query(default=None, ge=1),
+                       limit: int = Query(default=30, ge=1, le=100), db: Session = Depends(get_db)) -> dict[str, Any]:
+    return intervention_history(db, run_id, before_seq=before_seq, limit=limit)
 
 
 @app.post("/api/runs/{run_id}/stop")

@@ -31,6 +31,35 @@ def plan_model(monkeypatch):
     monkeypatch.setattr("app.main.provider.chat", chat)
 
 
+def test_visual_endpoint_returns_valid_scene_and_preserves_errors(monkeypatch):
+    from app.visual_director import VisualPlan
+    calls = []
+
+    async def generate(_provider, _workflow, public_state):
+        calls.append(public_state)
+        return VisualPlan.model_validate({"version": 1, "renderer": "spatial", "theme": {"background": "#111111", "surface": "#333333", "ink": "#FFFFFF", "accent": "#FFFF00"}, "regions": [
+            {"id": "r", "label": "Room", "x": 0, "y": 0, "width": 500, "height": 300}], "placements": []})
+
+    monkeypatch.setattr("app.main.generate_visual", generate)
+    gen = _client_with_db()
+    client = next(gen)
+    body = {"workflow": {"id": "wf_visual", "name": "visual", "nodes": [], "edges": []}}
+    try:
+        response = client.post("/api/presentation/generate", json=body)
+        assert response.status_code == 200 and response.json()["regions"][0]["id"] == "r"
+        assert calls == [{}]
+        assert client.post("/api/presentation/generate", json={**body, "run_id": "missing"}).status_code == 404
+        assert len(calls) == 1
+
+        async def fail(*_args):
+            raise ValueError("PRIVATE provider response")
+        monkeypatch.setattr("app.main.generate_visual", fail)
+        response = client.post("/api/presentation/generate", json=body)
+        assert response.status_code == 502 and "PRIVATE" not in response.text
+    finally:
+        gen.close()
+
+
 def _client_with_db() -> Generator[TestClient, None, None]:
     test_engine = create_engine(
         "sqlite://",

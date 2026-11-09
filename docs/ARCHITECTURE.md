@@ -1,10 +1,12 @@
 ﻿# 系统架构说明
 
-最后更新：2026-11-01
+最后更新：2026-11-06
 
 ## 1. 总体架构
 
 前端默认使用首页→草案→运行的一站式路径，原画布编辑器作为二级入口保留。只读场景投影、渲染协议和可选图片层见 [FRONTEND_JOURNEY.md](FRONTEND_JOURNEY.md)。展示元数据不具备世界事实写入权。
+
+玩家干预通过 [PLAYER_INTERVENTIONS.md](PLAYER_INTERVENTIONS.md) 的独立网关进入安全行动边界：Outcome 复用 State Coder 校验与单事务提交，Action 复用原角色运行和 Action Check；控制权交接属于机械上下文而非领域事实。Dynamic State 仍是唯一语义状态，结果不是伪造的 Agent 行动。检查点、验证后的分支继承和只读场景投影沿用同一事件链。
 
 - 前端：React + TypeScript + React Flow + Zustand + React Query + i18next/react-i18next
 - 后端：FastAPI + SQLAlchemy + SQLite

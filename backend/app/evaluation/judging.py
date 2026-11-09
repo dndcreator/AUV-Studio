@@ -8,6 +8,9 @@ from ..execution.provider import OpenAICompatibleProvider, provider_accepts_keyl
 
 
 RUBRICS = {
+    "visual": {"theme": "Palette and decorative geometry distinctly express the requested setting, not just renamed boxes.",
+               "grounding": "Only supplied public concepts drive bindings; no invented actor outcomes or private facts.",
+               "usability": "Actors, room geometry and decorative primitives fit a legible schematic layout."},
     "planning": {"intent": "Preserves requested mode, cultural setting, scope and deliverable.",
                  "roles": "Roles retain separate interests, capabilities and private knowledge.",
                  "completion": "Exit condition is observable and matches the requested segment, without a prewritten outcome."},

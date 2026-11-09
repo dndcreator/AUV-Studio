@@ -48,6 +48,14 @@ export function buildGlimpseRows(events: RunEvent[]): GlimpseRow[] {
 
   for (const event of events) {
     const payload = (event.payload ?? {}) as Record<string, unknown>;
+    if (event.event === "state_restored" && Array.isArray(payload.public_actions)) {
+      for (const action of payload.public_actions) {
+        const text = cleanText(action.action);
+        if (text) rows.push({ seq: Number(action.event_seq), speaker: String(action.node_id), event: "inherited", text,
+          time: new Date(event.timestamp).toLocaleTimeString(), score: 0 });
+      }
+      continue;
+    }
     // Automatic quality corrections are backstage control signals. Exposing them
     // turns the scene feed into a prompt/debug console instead of a broadcast.
     if (event.event === "director_corrected") {

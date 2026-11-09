@@ -9,15 +9,17 @@ from textwrap import dedent
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from .audit import append_trace_to_payload, load_last_event_hash, verify_run_event_chain
+from .audit import verify_run_event_chain
 from .config import settings
 from .execution.provider import OpenAICompatibleProvider
+from .execution.events import emit_event
 from .models import MemoryRecord, NodeRunRecord, RunEventRecord, RunRecord, WorkflowRecord, WorkflowTemplateRecord
 from .observability import perf_tracker
 from .mode_contracts import MODE_CONTRACTS
 from .model_config_service import apply_stored_model_config, get_model_config, save_model_config, test_model_config
 from .narrative_fidelity import generate_grounded_narrative
 from .plan_compiler import compile_workflow_from_plan
+from .player_interventions import outcome_facts
 from .schemas import (
     DirectorCapability,
     DirectorCommandRequest,
@@ -253,30 +255,12 @@ def request_run_stop(db: Session, run_id: str) -> dict[str, str]:
     if run.status == "stopping":
         return {"run_id": run_id, "status": run.status}
 
-    _, prev_hash = load_last_event_hash(db, run_id)
-    now = datetime.now(timezone.utc)
-    event_name = "stopped"
-    payload, _ = append_trace_to_payload(
-        payload={"previous_status": previous_status, "status": run.status, "requested_by": "user"},
-        run_id=run_id,
-        node_id="run_control",
-        event=event_name,
-        timestamp=now,
-        duration_ms=None,
-        prev_hash=prev_hash,
+    emit_event(
+        db, run_id, "run_control", "stopped",
+        {"previous_status": previous_status, "status": run.status, "requested_by": "user"},
         caused_by="user",
         context_snapshot={"previous_status": previous_status, "status": run.status},
     )
-    db.add(
-        RunEventRecord(
-            run_id=run_id,
-            node_id="run_control",
-            event=event_name,
-            timestamp=now,
-            payload_json=json.dumps(payload, ensure_ascii=False),
-        )
-    )
-    db.commit()
     return {"run_id": run_id, "status": run.status}
 
 
@@ -332,36 +316,18 @@ def apply_director_command(db: Session, run_id: str, req: DirectorCommandRequest
         "normalized_args": args,
         "guidance": guidance,
     }
-    _, prev_hash = load_last_event_hash(db, run_id)
-    now = datetime.now(timezone.utc)
-    signed_payload, _ = append_trace_to_payload(
-        payload=base_payload,
-        run_id=run_id,
-        node_id="director_console",
-        event="director_overridden",
-        timestamp=now,
-        duration_ms=None,
-        prev_hash=prev_hash,
+    event_seq, _ = emit_event(
+        db, run_id, "director_console", "director_overridden", base_payload,
         caused_by="director",
         context_snapshot={"scope": req.scope, "target_node_id": req.target_node_id or "", "capability_id": capability},
     )
-    event = RunEventRecord(
-        run_id=run_id,
-        node_id="director_console",
-        event="director_overridden",
-        timestamp=now,
-        payload_json=json.dumps(signed_payload, ensure_ascii=False),
-    )
-    db.add(event)
-    db.commit()
-    db.refresh(event)
     return DirectorCommandResponse(
         run_id=run_id,
         accepted=True,
         applied_capability=capability,
         normalized_args=args,
         guidance=guidance,
-        event_seq=event.seq,
+        event_seq=event_seq,
     )
 
 
@@ -588,8 +554,8 @@ def get_run_checkpoints(db: Session, run_id: str, limit: int = 80) -> RunCheckpo
         db.query(RunEventRecord)
         .filter(
             RunEventRecord.run_id == run_id,
-            RunEventRecord.event.in_(["succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited"]),
-            RunEventRecord.node_id != "run_control",
+            RunEventRecord.event.in_(["succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited", "nodes_activated", "player_applied", "player_control_changed", "state_restored", "player_checkpoint"]),
+            (RunEventRecord.node_id != "run_control") | (RunEventRecord.event == "state_restored"),
         )
         .order_by(RunEventRecord.seq.desc())
         .limit(max(1, min(limit, 300)))
@@ -598,6 +564,8 @@ def get_run_checkpoints(db: Session, run_id: str, limit: int = 80) -> RunCheckpo
     checkpoints: list[RunCheckpoint] = []
     for row in rows:
         payload = _safe_json_loads(row.payload_json, {})
+        if row.event == "nodes_activated" and not isinstance(payload.get("_rollback_snapshot"), dict):
+            continue
         trace = payload.get("_trace", {}) if isinstance(payload, dict) else {}
         context_snapshot = trace.get("context_snapshot", {}) if isinstance(trace, dict) else {}
         output = payload.get("output", {}) if isinstance(payload, dict) else {}
@@ -626,9 +594,11 @@ def build_rollback_request(db: Session, run_id: str, request: RollbackRequest) -
     row = db.query(RunEventRecord).filter(RunEventRecord.run_id == run_id, RunEventRecord.seq == request.event_seq).first()
     if row is None:
         raise HTTPException(status_code=404, detail="checkpoint event not found")
-    if row.event not in {"succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited"}:
+    if row.event not in {"succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited", "nodes_activated", "player_applied", "player_control_changed", "state_restored", "player_checkpoint"}:
         raise HTTPException(status_code=400, detail="event is not rollback-capable")
     payload = _safe_json_loads(row.payload_json, {})
+    if row.event == "nodes_activated" and not isinstance(payload.get("_rollback_snapshot"), dict):
+        raise HTTPException(status_code=400, detail="event has no continuous checkpoint")
     trace = payload.get("_trace", {}) if isinstance(payload, dict) else {}
     context_snapshot = trace.get("context_snapshot", {}) if isinstance(trace, dict) and isinstance(trace.get("context_snapshot", {}), dict) else {}
     rollback_input = {
@@ -977,6 +947,9 @@ def _build_readable_report_source(run_detail: RunDetail, workflow: WorkflowDefin
             interactions.append(f"{label}:\n{text}")
 
     parts: list[str] = []
+    if continuous and isinstance(run_detail.output.get("actions"), list):
+        interactions = [f"{str(node_map[row['node_id']].config.get('entity_name') or row.get('actor') or row['node_id'])}:\n{row['action']}"
+                        for row in run_detail.output["actions"] if isinstance(row, dict) and row.get("node_id") in node_map and row.get("action")]
     if workflow:
         evidence = workflow.environment.simulation.get("evidence", {})
         evidence_items = evidence.get("items", []) if isinstance(evidence, dict) else []
@@ -988,6 +961,11 @@ def _build_readable_report_source(run_detail: RunDetail, workflow: WorkflowDefin
             if observed:
                 parts.extend(["## Observed evidence supplied by the user", "\n\n".join(observed)])
     parts.extend(["## Simulated interactions", "\n\n".join(interactions) or "No readable interactions were recorded."])
+    facts = outcome_facts(run_detail.output.get("simulation", {}))
+    if facts:
+        parts.extend(["## Current explicit player-established facts",
+                      "These current facts do not rewrite earlier actions. Preserve private knowledge boundaries.",
+                      json.dumps(facts, ensure_ascii=False)])
     if final_outputs:
         parts.extend(["## Final simulation result", "\n\n".join(final_outputs)])
     return "\n\n".join(parts).strip()

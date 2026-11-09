@@ -1,6 +1,28 @@
 {
+  "intervention": {
+    "action": "Attempt action", "actionPlaceholder": "What should this character try?", "actor": "Acting character", "chooseActor": "Choose character",
+    "takeover": "Take over", "release": "Return control", "handoff": "Handing over", "playerControlled": "Player", "waiting": "Waiting for player",
+    "actionQueued": "Action queued", "actionApplied": "Character action recorded", "control": "Control",
+    "history": "Interventions", "historyFailed": "Could not load interventions", "noHistory": "No interventions yet",
+    "trace": "Trace", "branchBefore": "Branch before", "branchAfter": "Continue from here", "override": "Override current facts",
+    "confirmOverwrite": "Override conflicting current facts?", "more": "Load more",
+    "status": { "queued": "Queued", "running": "Processing", "applied": "Applied", "rejected": "Not applied" },
+    "mode": "Input mode", "director": "Director", "outcome": "World outcome", "placeholder": "What happens in this world?",
+    "queued": "Outcome queued", "applied": "Outcome applied", "failed": "Outcome was not applied",
+    "unavailable": "Cannot submit now. Refresh the run and try again.",
+    "errors": {
+      "control_changed": "Control changed; submit the action again.", "action_conflict": "Action was not admitted. Revise the attempt.",
+      "action_model_failed": "Action processing failed; nothing was admitted.",
+      "state_version_conflict": "The world changed. Review it and submit again.",
+      "outcome_conflict": "The outcome conflicts with existing facts. Revise it or create a branch.",
+      "outcome_patch_rejected": "State validation failed; no outcome was applied.",
+      "outcome_model_failed": "Model request failed; no outcome was applied.",
+      "outcome_context_too_large": "The world context exceeds the intervention limit.", "run_ended": "Run ended; outcome not applied."
+    }
+  },
   "subtitle": "Visual Multi-Agent Simulation",
   "journey": {
+    "visualize": "Generate visual scene", "visualFailed": "Visual generation failed; previous scene retained",
     "applyEdit": "Apply & open editor",
     "home": "Home", "workspaceView": "Workspace view", "scene": "Scene", "editor": "Editor",
     "projects": "Projects", "settings": "Settings", "whatToSimulate": "What would you like to simulate?",

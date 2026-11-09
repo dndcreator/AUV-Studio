@@ -15,9 +15,10 @@ function ActorCard({ actor, selected, portrait, onClick }: { actor: SceneActor; 
         {portrait ? <img src={apiAssetUrl(portrait)} alt="" /> : <StudioIcon name={actor.kind === "group" ? "group" : actor.kind === "environment" ? "world" : actor.kind === "artifact" ? "artifact" : "person"} />}
       </span>
       <div><strong>{actor.name}</strong><span>{t(`journey.entity.${actor.kind}`, { defaultValue: actor.kind })}</span></div>
+      {actor.control && actor.control !== "autonomous" ? <span className="actor-control-badge">{t(actor.control === "handoff" ? "intervention.handoff" : "intervention.playerControlled")}</span> : null}
     </div>
     <p>{actor.action || actor.profile}</p>
-    <span className="scene-actor-status"><i />{t(`studio.status.${actor.status}`, { defaultValue: actor.status })}</span>
+    <span className="scene-actor-status"><i />{actor.status === "waiting_player" ? t("intervention.waiting") : t(`studio.status.${actor.status}`, { defaultValue: actor.status })}</span>
   </button>;
 }
 
@@ -60,6 +61,12 @@ function SpatialRenderer({ frame, selectedId, onSelect }: SceneRendererProps) {
   const height = Math.max(600, ...regions.map(r => r.y + r.height + 30));
   const unplaced = frame.actors.filter(actor => !placements.some(p => p.node_id === actor.id));
   return <div className="spatial-scene-scroll"><div className="spatial-scene" style={{ width, height: height + Math.ceil(unplaced.length / 3) * 250 }}>
+    <svg className="scene-decoration" width={width} height={height} aria-hidden="true">
+      {(frame.presentation.primitives ?? []).map(p => <g key={p.id}><title>{p.label}</title>
+        {p.shape === "circle" ? <ellipse cx={p.x + p.width / 2} cy={p.y + p.height / 2} rx={p.width / 2} ry={p.height / 2} fill={p.color} />
+          : p.shape === "line" ? <line x1={p.x} y1={p.y} x2={p.x + p.width} y2={p.y + p.height} stroke={p.color} strokeWidth={4} />
+          : <rect x={p.x} y={p.y} width={p.width} height={p.height} rx={3} fill={p.color} />}</g>)}
+    </svg>
     {regions.map(region => <section className="scene-region" key={region.id} aria-label={region.label}
       style={{ left: region.x, top: region.y, width: region.width, height: region.height }}><strong>{region.label}</strong></section>)}
     {frame.actors.map((actor) => {

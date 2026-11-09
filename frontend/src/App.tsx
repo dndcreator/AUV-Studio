@@ -21,6 +21,8 @@ import { mergeRunEvents, useRunPolling } from "./hooks/useRunPolling";
 import { JourneyHeader } from "./components/journey/JourneyHeader";
 import { Launchpad } from "./components/journey/Launchpad";
 import { DirectorComposer } from "./components/journey/DirectorComposer";
+import { InterventionHistory } from "./components/journey/InterventionHistory";
+import { usePlayerInterventions } from "./hooks/usePlayerInterventions";
 import { WorkspaceRail } from "./components/journey/WorkspaceRail";
 import { SceneViewport } from "./scene/SceneViewport";
 import { buildSceneFrame } from "./scene/presentation";
@@ -459,11 +461,11 @@ export default function App() {
   });
 
   const rollbackMutation = useMutation({
-    mutationFn: async (checkpoint: RunCheckpoint) => {
+    mutationFn: async (checkpoint: RunCheckpoint | number) => {
       if (!runId) {
         throw new Error("run_id is empty");
       }
-      return api.rollbackRun(runId, checkpoint.seq, rollbackReason.trim() || undefined);
+      return api.rollbackRun(runId, typeof checkpoint === "number" ? checkpoint : checkpoint.seq, rollbackReason.trim() || undefined);
     },
     onSuccess: (data) => {
       setRunId(data.run_id);
@@ -1031,8 +1033,23 @@ export default function App() {
 
   const displayWorkflow = useMemo(() => planDraft?.workflow ?? buildWorkflowPayload(), [planDraft, workflow, nodes, edges, buildWorkflowPayload]);
   const sceneFrame = useMemo(() => buildSceneFrame(displayWorkflow, planDraft ? [] : visibleEvents), [displayWorkflow, planDraft, visibleEvents]);
+  const visualMutation = useMutation({
+    mutationFn: api.generatePresentation,
+    onSuccess: (presentation, request) => {
+      if (request.workflow.id !== displayWorkflow.id) return;
+      if (planDraft) setPlanDraft({ ...planDraft, workflow: { ...planDraft.workflow, environment: { ...planDraft.workflow.environment,
+        simulation: { ...planDraft.workflow.environment.simulation, presentation } } } });
+      else updateSimulationMeta({ presentation });
+    },
+    onError: (error) => setUiNotice({ type: "error", message: error instanceof Error ? error.message : tr("journey.visualFailed") }),
+  });
   const sceneSelection = displayWorkflow.nodes.find(node => node.id === selectedNodeId) ?? null;
   const activeRun = ["queued", "pending", "running", "waiting_human", "stopping"].includes(runStatus);
+  const player = usePlayerInterventions({ runId, active: runStatus === "running" && displayWorkflow.environment.simulation?.execution_model === "continuous",
+    text: directorText, events, onText: setDirectorText, onNotice: setUiNotice });
+  useEffect(() => {
+    if (selectedNodeId && displayWorkflow.nodes.some(node => node.id === selectedNodeId && ["agent", "external_agent"].includes(node.type))) player.setActorId(selectedNodeId);
+  }, [selectedNodeId, displayWorkflow.id]);
   const planning = compilePlanMutation.isPending || directorArrangeMutation.isPending || isApplyingPlanDraft;
   const enterEditor = (panel: "create" | "inspect" | "advanced" | null, step?: "manual" | "templates") => {
     if (planDraft) {
@@ -1050,7 +1067,11 @@ export default function App() {
     compilePlanMutation.mutate(undefined);
   };
   const sendComposer = () => {
-    if (!directorText.trim() || planning || directorCommandMutation.isPending) return;
+    if (!directorText.trim() || planning || directorCommandMutation.isPending || player.busy) return;
+    if (activeRun && runId && player.mode !== "director") {
+      if (runStatus === "running" && !player.blocked) player.send();
+      return;
+    }
     if (activeRun && runId) { directorCommandMutation.mutate(); return; }
     const next = `${planText || displayWorkflow.environment.scenario || displayWorkflow.name}\n\n${directorText.trim()}`;
     setPlanText(next); setDirectorText(""); compilePlanMutation.mutate(next);
@@ -1724,15 +1745,28 @@ export default function App() {
             <div className="scene-workspace-heading">
               <div><span className="journey-stage-label">{tr(planDraft ? "journey.draftReady" : activeRun ? "journey.live" : "journey.ready")}</span>
                 <span>{tr("journey.participants", { count: sceneFrame.actors.length })}</span></div>
+              <button disabled={visualMutation.isPending || planning} onClick={() => visualMutation.mutate({ workflow: displayWorkflow, run_id: planDraft ? undefined : runId ?? undefined })}>
+                {tr(visualMutation.isPending ? "journey.preparing" : "journey.visualize")}</button>
               {runId ? <button onClick={() => setShowLiveTranscript(true)}>{tr("journey.fullScene")}</button> : null}
             </div>
             <SceneViewport frame={sceneFrame} selectedId={selectedNodeId} onSelect={setSelectedNodeId} />
             {directorResult?.guidance ? <div className="journey-director-response">{directorResult.guidance}</div> : null}
-            <DirectorComposer value={directorText} busy={planning || directorCommandMutation.isPending || runMutation.isPending}
+            <DirectorComposer value={directorText} busy={planning || directorCommandMutation.isPending || runMutation.isPending || player.busy}
+              mode={player.mode} onMode={player.setMode} blocked={player.blocked}
+              interventionsAvailable={runStatus === "running" && displayWorkflow.environment.simulation?.execution_model === "continuous"}
+              actors={sceneFrame.actors.filter(actor => displayWorkflow.nodes.some(node => node.id === actor.id && ["agent", "external_agent"].includes(node.type)))}
+              actorId={player.actorId} onActor={player.setActorId} onControl={player.control}
+              control={player.status?.handoffs[player.actorId] ? "handoff" : player.status?.controls[player.actorId] ?? "autonomous"}
+              waiting={player.status?.waiting_actor_ids.includes(player.actorId)} onHistory={runId ? player.openHistory : undefined}
               running={activeRun} stopping={runStatus === "stopping" || stopMutation.isPending} canStart={displayWorkflow.nodes.length > 0 && !activeRun}
               draft={Boolean(planDraft)} needsRefresh={draftNeedsRegeneration} onChange={setDirectorText} onSend={sendComposer}
               onStart={() => planDraft ? void applyPlanDraft(true) : runMutation.mutate()} onStop={() => stopMutation.mutate()}
               onResults={() => setShowRunResults(true)} hasResults={runStatus === "succeeded"} />
+            <InterventionHistory open={player.showHistory} items={player.history} busy={player.historyBusy} more={!!player.nextBefore}
+              canOverride={runStatus === "running" && !player.busy && !player.blocked}
+              onClose={player.closeHistory} onMore={player.moreHistory} onBranch={seq => rollbackMutation.mutate(seq)}
+              onTrace={seq => { player.closeHistory(); enterEditor("advanced"); void inspectTrace(seq); }} onOverride={player.overwrite}
+              names={Object.fromEntries(sceneFrame.actors.map(actor => [actor.id, actor.name]))} />
           </>}
         </main>
 

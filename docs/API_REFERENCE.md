@@ -1,8 +1,12 @@
 ﻿# API 参考
 
-最后更新：2026-10-25
+最后更新：2026-11-06
 
 基地址：`http://localhost:8000/api`
+
+## 玩家结果干预
+
+`GET /runs/{run_id}/interventions` 查询状态版本、待处理请求、控制权和等待角色；`POST /runs/{run_id}/interventions` 使用 `mode=action|outcome`、`instruction`、`base_state_version` 和幂等 `request_id`；Action 必须带 `actor_id`。`POST /runs/{run_id}/controls` 用 `actor_id / control / request_id` 请求接管或归还；`GET /runs/{run_id}/interventions/history` 通过 `limit / before_seq` 翻页。202 只表示排队或交接，通过现有 events 接口读取最终状态。限运行中的连续模拟，Outcome 另需启用 Dynamic State；显式覆盖仅支持 Outcome 的 `conflict_policy=overwrite`。协议、错误码、隐私及回滚边界见 [PLAYER_INTERVENTIONS.md](PLAYER_INTERVENTIONS.md)。
 
 浏览器请求的 `Origin` 必须匹配 `AUV_ALLOWED_ORIGINS`。默认允许 localhost、127.0.0.1、[::1] 的 HTTP 5173/4173/8000 端口，不允许通配符；未授权来源返回 403。未携带 Origin 的本地客户端和外接 Agent 不受此限制。这不是身份认证，不应直接将服务暴露到公网。
 

@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any
 
-EVIDENCE_KINDS = frozenset({"claim", "observation", "action", "inference"})
+EVIDENCE_KINDS = frozenset({"claim", "observation", "action", "inference", "player_outcome"})
 
 
 _CONCEPT_ID_RE = re.compile(r"[^a-z0-9_]+")
@@ -155,6 +155,7 @@ def apply_dynamic_state_proposal(
     seq: int,
     source_actions: list[dict[str, Any]],
     round_index: int,
+    source_outcome_seq: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     state = _normalize_dynamic_state(current)
     concepts = state["concepts"]
@@ -175,7 +176,7 @@ def apply_dynamic_state_proposal(
         if not concept_id:
             rejected.append({"kind": "schema", "reason": "invalid_id"})
             continue
-        source_refs = _validated_source_refs(raw.get("source_refs"), allowed_refs)
+        source_refs = _validated_source_refs(raw.get("source_refs"), allowed_refs, source_outcome_seq)
         if not source_refs:
             rejected.append({"kind": "schema", "id": concept_id, "reason": "missing_or_invalid_source_ref"})
             continue
@@ -258,8 +259,8 @@ def apply_dynamic_state_proposal(
                     {"kind": "schema", "id": concept_id, "reason": f"immutable_fields:{','.join(changed_fields)}"}
                 )
                 continue
-        source_nodes = {ref["node_id"] for ref in source_refs}
-        if visibility == "private" and owner_id not in source_nodes:
+        source_nodes = {ref.get("node_id") for ref in source_refs}
+        if visibility == "private" and owner_id not in source_nodes and source_outcome_seq is None:
             rejected.append({"kind": "schema", "id": concept_id, "reason": "private_owner_not_source"})
             continue
         retention = _retention_policy(raw.get("retention"), round_index)
@@ -296,12 +297,12 @@ def apply_dynamic_state_proposal(
         if not concept_id or not isinstance(concept, dict) or concept.get("status") != "active":
             rejected.append({"kind": "state", "id": concept_id, "reason": "unknown_concept"})
             continue
-        source_refs = _validated_source_refs(raw.get("source_refs"), allowed_refs)
+        source_refs = _validated_source_refs(raw.get("source_refs"), allowed_refs, source_outcome_seq)
         if not source_refs:
             rejected.append({"kind": "state", "id": concept_id, "reason": "missing_or_invalid_source_ref"})
             continue
-        if concept.get("visibility") == "private" and concept.get("owner_id") not in {
-            ref["node_id"] for ref in source_refs
+        if concept.get("visibility") == "private" and source_outcome_seq is None and concept.get("owner_id") not in {
+            ref.get("node_id") for ref in source_refs
         }:
             rejected.append({"kind": "state", "id": concept_id, "reason": "private_owner_not_source"})
             continue
@@ -321,10 +322,13 @@ def apply_dynamic_state_proposal(
         if not isinstance(evidence_kind, str) or evidence_kind not in EVIDENCE_KINDS:
             rejected.append({"kind": "state", "id": concept_id, "reason": "invalid_evidence_kind"})
             continue
+        if (evidence_kind == "player_outcome") != (source_outcome_seq is not None):
+            rejected.append({"kind": "state", "id": concept_id, "reason": "invalid_outcome_authority"})
+            continue
         if not _value_matches_type(value, str(concept.get("value_type", "text"))):
             rejected.append({"kind": "state", "id": concept_id, "reason": "value_type_mismatch"})
             continue
-        sources = list(dict.fromkeys(ref["node_id"] for ref in source_refs))[:12]
+        sources = list(dict.fromkeys(ref["node_id"] for ref in source_refs if ref.get("node_id")))[:12]
         values[concept_id] = {
             "value": _bounded_value(value),
             "confidence": round(max(0.0, min(1.0, _safe_float(raw.get("confidence"), 0.6))), 4),
@@ -540,12 +544,17 @@ def _allowed_source_refs(actions: list[dict[str, Any]]) -> set[tuple[str, int, i
     return refs
 
 
-def _validated_source_refs(value: Any, allowed: set[tuple[str, int, int]]) -> list[dict[str, Any]]:
+def _validated_source_refs(value: Any, allowed: set[tuple[str, int, int]],
+                           outcome_seq: int | None = None) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     result: list[dict[str, Any]] = []
     for item in value:
         if not isinstance(item, dict):
+            continue
+        if item.get("event_type") == "player_outcome":
+            if type(outcome_seq) is int and outcome_seq > 0 and type(item.get("event_seq")) is int and item["event_seq"] == outcome_seq:
+                result.append({"event_type": "player_outcome", "event_seq": outcome_seq})
             continue
         node_id = str(item.get("node_id", "")).strip()
         try:
@@ -561,9 +570,10 @@ def _validated_source_refs(value: Any, allowed: set[tuple[str, int, int]]) -> li
 
 def _unique_refs(refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    seen: set[tuple[str, int, int]] = set()
+    seen: set[tuple[Any, ...]] = set()
     for ref in refs:
-        key = (str(ref.get("node_id", "")), int(ref.get("action_index", 0)), int(ref.get("event_seq", 0)))
+        key = (str(ref.get("event_type", "action")), str(ref.get("node_id", "")),
+               int(ref.get("action_index", 0)), int(ref.get("event_seq", 0)))
         if key not in seen:
             seen.add(key)
             result.append(ref)

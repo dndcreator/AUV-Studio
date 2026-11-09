@@ -22,6 +22,7 @@ RESULTS = ASSETS / "results"
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Opt-in component/system behavior benchmarks; default is zero-call preflight.")
     p.add_argument("--case", action="append", default=[])
+    p.add_argument("--suite", choices=["behavior", "visual"], default="behavior")
     p.add_argument("--capability", choices=sorted(RUBRICS))
     p.add_argument("--list", action="store_true")
     p.add_argument("--execute", action="store_true")
@@ -166,7 +167,7 @@ async def _execute(args: argparse.Namespace, cases: list[dict[str, Any]], budget
     sources = ("plan_compiler.py", "plan_generation.py", "plan_prompt.py", "execution/engine.py", "execution/nodes.py",
                "execution/action_consistency.py", "execution/action_evidence.py", "execution/scene_control.py",
                "execution/simulation_loop.py", "execution/dynamic_state.py", "execution/state_coding.py", "execution/memory.py",
-               "execution/context_book.py", "execution/perception.py", "narrative.py", "narrative_fidelity.py", "evaluation/targets.py")
+               "execution/context_book.py", "execution/perception.py", "narrative.py", "narrative_fidelity.py", "evaluation/targets.py", "visual_director.py")
     implementation = fingerprint({path: fingerprint((Path(__file__).parent / path).read_text(encoding="utf-8")) for path in sources})
     artifact = {
         "schema_version": 1, "created_at": datetime.now(timezone.utc).isoformat(), "mode": "calibration" if args.calibrate else "behavior",
@@ -194,7 +195,7 @@ async def _execute(args: argparse.Namespace, cases: list[dict[str, Any]], budget
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        _, all_cases = load_cases(args.calibrate)
+        _, all_cases = load_cases(args.calibrate, args.suite)
         if args.list:
             print("\n".join(f"{row['id']}: {row['capability']}" for row in all_cases))
             return 0

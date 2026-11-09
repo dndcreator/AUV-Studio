@@ -41,7 +41,7 @@ def proposal_from_response(response: dict[str, Any], *, director_envelope: bool 
 
 
 def apply_state_batch(current: dict[str, Any], proposal: Any, *, actions: list[dict[str, Any]],
-                      seq: int, round_index: int) -> tuple[dict[str, Any], dict[str, Any]]:
+                      seq: int, round_index: int, source_outcome_seq: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     baseline = copy.deepcopy(current)
     patch = parse_state_coder_output(json.dumps(proposal, ensure_ascii=False, default=str))
     if patch.get("parse_error"):
@@ -50,7 +50,8 @@ def apply_state_batch(current: dict[str, Any], proposal: Any, *, actions: list[d
                   "schema_version": current.get("schema_version", 0), "accepted_schema_ops": [],
                   "accepted_state_ops": [], "rejected": [{"kind": "protocol", "reason": patch["parse_error"]}]}
     else:
-        next_state, result = apply_dynamic_state_proposal(current, patch, seq=seq, source_actions=actions, round_index=round_index)
+        next_state, result = apply_dynamic_state_proposal(current, patch, seq=seq, source_actions=actions,
+                                                         round_index=round_index, source_outcome_seq=source_outcome_seq)
     committed = not result["rejected"]
     if not committed:
         next_state = baseline
