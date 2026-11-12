@@ -172,6 +172,89 @@ def test_official_deepseek_defaults_to_low_effort_without_disabling_reasoning(mo
     assert response["metrics"]["provider_duration_ms"] >= 0
 
 
+@pytest.mark.parametrize("finish,reasoning,usage", [
+    ("length", "PRIVATE-REASONING", {"prompt_tokens": 123, "completion_tokens": 900,
+                                   "completion_tokens_details": {"reasoning_tokens": 900}}),
+    ("stop", "", {"prompt_tokens": 0, "completion_tokens": 0}),
+    ("length", "PRIVATE-REASONING", {}),
+    ("PRIVATE-FINISH", "PRIVATE-REASONING", {"prompt_tokens": True, "completion_tokens": -1,
+                                           "completion_tokens_details": {"reasoning_tokens": "900"}}),
+])
+def test_empty_response_diagnostics_survive_error_wrapping_without_raw_text(monkeypatch, finish, reasoning, usage):
+    _Client.calls = []
+    _Client.response = {"choices": [{"message": {"content": None, "reasoning_content": reasoning}, "finish_reason": finish}],
+                        "usage": usage, "api_key": "PRIVATE-KEY", "error": "PRIVATE-RESPONSE"}
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", _Client)
+    provider = OpenAICompatibleProvider("https://api.deepseek.com", "PRIVATE-KEY", 10, 0,
+                                        default_model="deepseek-v4-flash", max_output_tokens=900)
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(provider.chat("", "PRIVATE-SYSTEM", "PRIVATE-USER"))
+    exc = error.value
+    meta = exc.diagnostics
+    assert exc.code == "empty_content" and exc.status_code is None
+    assert meta["finish_reason"] == (finish if finish in {"length", "stop"} else "unknown")
+    assert meta["reasoning_present"] == bool(reasoning)
+    assert meta["content_chars"] == 0 and meta["max_tokens"] == 900
+    assert meta["thinking_mode"] == "default" and meta["reasoning_effort"] == "low"
+    assert meta["provider_attempts"] == 1 and meta["provider_duration_ms"] >= 0
+    for key in ("prompt_tokens", "completion_tokens"):
+        expected = usage.get(key)
+        assert meta.get(key) == (expected if type(expected) is int and expected >= 0 else None)
+    assert meta.get("reasoning_tokens") == (900 if usage.get("completion_tokens") == 900 else None)
+    assert "PRIVATE" not in str(meta) + str(exc)
+    assert len(_Client.calls) == 1
+
+
+def test_ollama_empty_content_reports_native_counters_without_assuming_reasoning_tokens(monkeypatch):
+    _Client.calls = []
+    _Client.response = {"message": {"content": "  ", "thinking": "PRIVATE-REASONING"}, "done_reason": "length",
+                        "prompt_eval_count": 14, "eval_count": 90}
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", _Client)
+    provider = OpenAICompatibleProvider("http://localhost:11434", "", 10, 0, provider_kind="ollama", max_output_tokens=90)
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(provider.chat("llama3.2", "system", "user"))
+    meta = error.value.diagnostics
+    assert meta["prompt_tokens"] == 14 and meta["completion_tokens"] == 90
+    assert meta["finish_reason"] == "length" and meta["reasoning_present"] is True
+    assert meta["content_chars"] == 2 and meta["max_tokens"] == 90
+    assert "reasoning_tokens" not in meta and "PRIVATE" not in str(meta)
+
+
+def test_diagnostics_reject_arbitrary_fields_and_invalid_counter_types():
+    from app.execution.provider import safe_provider_diagnostics
+    assert safe_provider_diagnostics(None) == {}
+    assert safe_provider_diagnostics({"prompt_tokens": True, "completion_tokens": -1,
+        "reasoning_tokens": float("nan"), "content_chars": "10", "finish_reason": ["length"],
+        "thinking_mode": "PRIVATE", "reasoning_present": "yes", "raw": "PRIVATE"}) == {}
+
+
+def test_empty_response_metadata_reaches_checker_event_and_eval_trace_without_acceptance(monkeypatch):
+    from app.evaluation.budget import BudgetedProvider, EvalBudget
+    from app.execution.action_consistency import ActionConsistencyError, assess_candidate
+    _Client.calls = []
+    _Client.response = {"choices": [{"message": {"content": "", "reasoning_content": "PRIVATE-REASONING"},
+                                    "finish_reason": "length"}],
+                        "usage": {"prompt_tokens": 250, "completion_tokens": 900,
+                                  "completion_tokens_details": {"reasoning_tokens": 900}}}
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", _Client)
+    raw = OpenAICompatibleProvider("https://api.deepseek.com", "PRIVATE-KEY", 10, 2,
+                                    default_model="deepseek-v4-flash")
+    provider = BudgetedProvider(raw, EvalBudget(max_output_tokens_per_call=900), capture_trace=True)
+    events = []
+    with pytest.raises(ActionConsistencyError) as error:
+        asyncio.run(assess_candidate(provider=provider, candidate={"actor_id": "a", "action": "I wait."},
+            evidence=[{"id": "entity.a", "value": "A"}], record=events.append))
+    assert isinstance(error.value.__cause__, ProviderError)
+    assert len(events) == len(_Client.calls) == provider.usage.calls == 1
+    assert events[0]["assessment"] == {"decision": "error", "error_type": "ProviderError", "code": "empty_content"}
+    meta = events[0]["provider_diagnostics"]
+    assert meta["finish_reason"] == "length" and meta["reasoning_tokens"] == 900
+    assert meta == provider.request_trace[0]["provider_diagnostics"]
+    assert provider.usage.input_tokens == 250 and provider.usage.output_tokens == 900
+    assert provider.request_trace[0]["token_source"] == {"input": "provider", "output": "provider"}
+    assert "PRIVATE" not in str(events) + str(provider.request_trace)
+
+
 @pytest.mark.parametrize("url,model", [
     ("http://localhost:1234/v1", "deepseek-v4-flash"),
     ("https://proxy.invalid/v1", "deepseek-v4-flash"),

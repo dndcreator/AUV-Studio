@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, replace
 from time import perf_counter
 from typing import Any
 
-from ..execution.provider import ProviderError
+from ..execution.provider import ProviderError, safe_provider_diagnostics
 from ..execution.context_book import estimate_tokens as _estimate_tokens
 
 
@@ -94,6 +94,9 @@ class BudgetedProvider:
         self.usage_by_kind: dict[str, dict[str, int]] = {}
         self.capture_trace = capture_trace
         self.request_trace: list[dict[str, Any]] = []
+        self.started_at = perf_counter()
+        # Shared by scoped copies; reservation occurs without an await on this event loop.
+        self.inflight = {"input_tokens": 0, "output_tokens": 0}
         # Count each physical attempt here instead of hiding transport retries inside it.
         if hasattr(provider, "retry_count"):
             provider.retry_count = 0
@@ -114,29 +117,51 @@ class BudgetedProvider:
     async def _chat_once(self, model: str, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         estimated_input = _estimate_tokens(system_prompt) + _estimate_tokens(user_prompt)
         self._check_before_call(estimated_input)
+        reserved_output = self.budget.max_output_tokens_per_call
+        self.inflight["input_tokens"] += estimated_input
+        self.inflight["output_tokens"] += reserved_output
         self.usage.calls += 1
         started = perf_counter()
-        trace: dict[str, Any] = {"attempt": self.usage.calls,
+        trace: dict[str, Any] = {"attempt": self.usage.calls, "kind": request_kind(system_prompt),
+                                 "start_offset_ms": round((started - self.started_at) * 1000),
                                  "input_digest": hashlib.sha256((system_prompt + "\0" + user_prompt).encode()).hexdigest()}
         if self.capture_trace:
             self.request_trace.append(trace)
         try:
             response = await self.provider.chat(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
         except (Exception, asyncio.CancelledError) as exc:
-            # Failed requests may still be billed. Record the conservative reserved amount.
-            self._record_usage(system_prompt, estimated_input, self.budget.max_output_tokens_per_call, failed=True)
+            # An HTTP-200 empty response can still report usage; reserve only missing counters.
+            diagnostics = safe_provider_diagnostics(getattr(exc, "diagnostics", None))
+            supplied_input = diagnostics.get("prompt_tokens")
+            supplied_output = diagnostics.get("completion_tokens")
+            input_tokens = estimated_input if supplied_input is None else supplied_input
+            output_tokens = reserved_output if supplied_output is None else supplied_output
+            self._record_usage(system_prompt, input_tokens, output_tokens, failed=True)
             trace.update(status="error", error_type=type(exc).__name__, error_code=getattr(exc, "code", None),
-                         input_tokens=estimated_input, output_tokens=self.budget.max_output_tokens_per_call,
+                         input_tokens=input_tokens, output_tokens=output_tokens,
+                         token_source={"input": "provider" if supplied_input is not None else "estimate",
+                                       "output": "provider" if supplied_output is not None else "reserved"},
                          duration_ms=round((perf_counter() - started) * 1000))
+            if diagnostics:
+                trace["provider_diagnostics"] = diagnostics
+                if "finish_reason" in diagnostics:
+                    trace["finish_reason"] = diagnostics["finish_reason"]
             raise
+        finally:
+            self.inflight["input_tokens"] -= estimated_input
+            self.inflight["output_tokens"] -= reserved_output
         raw = response.get("raw", {}) if isinstance(response, dict) else {}
         raw_usage = raw.get("usage", {}) if isinstance(raw, dict) else {}
-        input_tokens = _usage_int(raw_usage, "prompt_tokens", "input_tokens") or estimated_input
-        output_tokens = _usage_int(raw_usage, "completion_tokens", "output_tokens") or _estimate_tokens(str(response.get("content", "")))
+        supplied_input = _usage_int(raw_usage, "prompt_tokens", "input_tokens")
+        supplied_output = _usage_int(raw_usage, "completion_tokens", "output_tokens")
+        input_tokens = estimated_input if supplied_input is None else supplied_input
+        output_tokens = _estimate_tokens(str(response.get("content", ""))) if supplied_output is None else supplied_output
         self._record_usage(system_prompt, input_tokens, output_tokens)
         choices = raw.get("choices", []) if isinstance(raw, dict) else []
         finish = choices[0].get("finish_reason") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
         trace.update(status="received", input_tokens=input_tokens, output_tokens=output_tokens,
+                     token_source={"input": "provider" if supplied_input is not None else "estimate",
+                                   "output": "provider" if supplied_output is not None else "estimate"},
                      output_digest=hashlib.sha256(str(response.get("content", "")).encode()).hexdigest(),
                      finish_reason=str(finish or raw.get("done_reason", "unknown"))[:80] if isinstance(raw, dict) else "unknown",
                      duration_ms=round((perf_counter() - started) * 1000))
@@ -147,11 +172,7 @@ class BudgetedProvider:
         return response
 
     def _record_usage(self, system: str, input_tokens: int, output_tokens: int, *, failed: bool = False) -> None:
-        categories = {"Visual Director": "visual", "independent evidence-based regression judge": "judge", "fixed criteria": "judge",
-                      "action consistency checker": "action_check", "literary fidelity checker": "writing_check",
-                      "process architect": "planning", "route attention": "routing", "continuity auditor": "audit",
-                      "State Coder repairing": "state_repair", "autonomous participant": "actor", "finished literary work": "writing"}
-        kind = next((kind for marker, kind in categories.items() if marker in system), "other")
+        kind = request_kind(system)
         row = self.usage_by_kind.setdefault(kind, {"calls": 0, "input_tokens": 0, "output_tokens": 0, "failed": 0})
         for key, value in {"calls": 1, "input_tokens": input_tokens, "output_tokens": output_tokens, "failed": int(failed)}.items():
             row[key] += value
@@ -161,22 +182,33 @@ class BudgetedProvider:
     def _check_before_call(self, estimated_input: int) -> None:
         if self.usage.calls >= self.budget.max_calls:
             raise EvalBudgetExceeded("evaluation call budget exceeded")
-        projected_tokens = self.usage.input_tokens + self.usage.output_tokens + estimated_input + self.budget.max_output_tokens_per_call
+        projected_tokens = (self.usage.input_tokens + self.usage.output_tokens + sum(self.inflight.values())
+                            + estimated_input + self.budget.max_output_tokens_per_call)
         if projected_tokens > self.budget.max_total_tokens:
             raise EvalBudgetExceeded("next call would exceed the evaluation token budget")
         projected_cost = (
-            (self.usage.input_tokens + estimated_input) * self.budget.input_usd_per_million
-            + (self.usage.output_tokens + self.budget.max_output_tokens_per_call) * self.budget.output_usd_per_million
+            (self.usage.input_tokens + self.inflight["input_tokens"] + estimated_input) * self.budget.input_usd_per_million
+            + (self.usage.output_tokens + self.inflight["output_tokens"] + self.budget.max_output_tokens_per_call) * self.budget.output_usd_per_million
         ) / 1_000_000
         if projected_cost > self.budget.max_cost_usd:
             raise EvalBudgetExceeded("next call would exceed the evaluation cost budget")
 
 
-def _usage_int(usage: Any, *keys: str) -> int:
+def request_kind(system: str) -> str:
+    categories = {"visual director": "visual", "independent evidence-based regression judge": "judge", "fixed criteria": "judge",
+                  "action consistency checker": "action_check", "literary fidelity checker": "writing_check",
+                  "process architect": "planning", "route attention": "routing", "continuity auditor": "audit",
+                  "state coder repairing": "state_repair", "state coder": "state_coder",
+                  "player-controlled actor": "player_actor", "autonomous participant": "actor",
+                  "finished literary work": "writing"}
+    return next((kind for marker, kind in categories.items() if marker in system.casefold()), "other")
+
+
+def _usage_int(usage: Any, *keys: str) -> int | None:
     if not isinstance(usage, dict):
-        return 0
+        return None
     for key in keys:
         value = usage.get(key)
-        if isinstance(value, int) and value >= 0:
+        if type(value) is int and value >= 0:
             return value
-    return 0
+    return None

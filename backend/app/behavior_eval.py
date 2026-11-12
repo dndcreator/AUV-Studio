@@ -8,6 +8,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from time import perf_counter
 
 from .evaluation.acceptance import compare_baseline, fingerprint
 from .evaluation.benchmarks import ASSETS, calibration_report, calibration_status, case_fingerprint, judge_identity, load_cases, provider_identity, summarize
@@ -15,6 +16,7 @@ from .evaluation.budget import BudgetedProvider, EvalBudget, EvalBudgetExceeded
 from .evaluation.judging import JudgeProtocolError, RUBRICS, build_judge_provider, judge_evidence
 from .evaluation.targets import run_target
 from .evaluation.judge_evidence import target_evidence
+from .evaluation.profiling import cost_profile
 
 RESULTS = ASSETS / "results"
 
@@ -22,7 +24,7 @@ RESULTS = ASSETS / "results"
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Opt-in component/system behavior benchmarks; default is zero-call preflight.")
     p.add_argument("--case", action="append", default=[])
-    p.add_argument("--suite", choices=["behavior", "visual"], default="behavior")
+    p.add_argument("--suite", choices=["behavior", "visual", "profiling"], default="behavior")
     p.add_argument("--capability", choices=sorted(RUBRICS))
     p.add_argument("--list", action="store_true")
     p.add_argument("--execute", action="store_true")
@@ -42,6 +44,8 @@ def parser() -> argparse.ArgumentParser:
 
 
 def _budget(args: argparse.Namespace) -> EvalBudget:
+    if args.suite == "profiling" and (args.judge or args.calibrate or args.promote_baseline):
+        raise ValueError("profiling isolates runtime cost; judge, calibration and baseline promotion are disabled")
     for value, low, high, label in ((args.repeat, 1, 5, "repeat"), (args.max_calls, 1, 400, "max-calls"),
                                   (args.max_total_tokens, 1000, 1000000, "max-total-tokens"),
                                   (args.max_output_tokens, 64, 4000, "max-output-tokens"),
@@ -160,7 +164,9 @@ async def _execute(args: argparse.Namespace, cases: list[dict[str, Any]], budget
             if calibration_states[cap] == "calibrated" and any(
                     case.get("gold", {}).get("review_status") != "approved" for case in cases if case["capability"] == cap):
                 calibration_states[cap] = "provisional_gold"
+    started = perf_counter()
     rows = await execute_cases(cases, actor, judge, repeat=args.repeat, timeout_seconds=args.timeout_seconds, calibration=args.calibrate)
+    wall_ms = round((perf_counter() - started) * 1000)
     summary = summarize(rows)
     summary["by_capability"] = {cap: summarize([row for row in rows if row["capability"] == cap]) for cap in sorted(calibration_states)}
     summary["by_case"] = {case["id"]: summarize([row for row in rows if row["case_id"] == case["id"]]) for case in cases}
@@ -170,14 +176,16 @@ async def _execute(args: argparse.Namespace, cases: list[dict[str, Any]], budget
                "execution/context_book.py", "execution/perception.py", "narrative.py", "narrative_fidelity.py", "evaluation/targets.py", "visual_director.py")
     implementation = fingerprint({path: fingerprint((Path(__file__).parent / path).read_text(encoding="utf-8")) for path in sources})
     artifact = {
-        "schema_version": 1, "created_at": datetime.now(timezone.utc).isoformat(), "mode": "calibration" if args.calibrate else "behavior",
+        "schema_version": 1, "created_at": datetime.now(timezone.utc).isoformat(), "mode": "calibration" if args.calibrate else "profiling" if args.suite == "profiling" else "behavior",
         "benchmark": {"case_hash": case_fingerprint(cases), "actor": provider_identity(actor_raw), "judge": identity,
                       "budget": asdict(budget), "repeat": args.repeat, "timeout_seconds": args.timeout_seconds},
         "implementation": implementation, "summary": summary, "samples": rows, "usage": actor.usage.model_dump(budget),
         "calibration_status": calibration_states, "judge_identity": identity,
         "usage_by_kind": actor.usage_by_kind,
         "requests": actor.request_trace,
+        "wall_ms": wall_ms,
     }
+    artifact["cost_profile"] = cost_profile(artifact, input_rate=budget.input_usd_per_million, output_rate=budget.output_usd_per_million)
     if args.calibrate:
         artifact["calibration_report"] = calibration_report(rows, gold)
         artifact["calibration_by_capability"] = {cap: calibration_report([row for row in rows if row["capability"] == cap], gold)
@@ -224,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("baseline already exists; use a new version, never overwrite")
         artifact = asyncio.run(_execute(args, cases, budget))
         RESULTS.mkdir(parents=True, exist_ok=True)
-        path = RESULTS / ("calibration_latest.json" if args.calibrate else "behavior_latest.json")
+        path = RESULTS / ("calibration_latest.json" if args.calibrate else "profiling_latest.json" if args.suite == "profiling" else "behavior_latest.json")
         path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
         if args.promote_baseline:
             if any(row["status"] in {"error", "not_run", "not_evaluated"} for row in artifact["samples"]):

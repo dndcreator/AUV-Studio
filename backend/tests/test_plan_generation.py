@@ -23,6 +23,15 @@ from app.plan_prompt import plan_prompt
 VALID = {"intent_mode": "roleplay", "goal": "Visit a guild", "roles": [{"name": "Adventurer", "count": 1}, {"name": "Clerk", "count": 1}]}
 
 
+def test_planning_profile_does_not_copy_the_global_future_goal_into_every_role():
+    from app.plan_compiler import _build_entity_profile
+    from app.plan_prompt import PLAN_SYSTEM
+    profile = _build_entity_profile(name="A", focus="Choose a route", responsibilities=[],
+        extracted={"goal": "PRIVATE-FUTURE-DISCLOSURE"}, simulation_blueprint={})
+    assert "PRIVATE-FUTURE-DISCLOSURE" not in profile
+    assert "macro goals" in PLAN_SYSTEM and "private knowledge belongs only to its owner" in PLAN_SYSTEM
+
+
 class Sequence:
     retry_count = 9
 

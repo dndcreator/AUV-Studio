@@ -14,6 +14,10 @@ PLAN_SYSTEM = (
     "Preserve user intent and uncertainty without repeating the source across fields. Return complete JSON only. "
     "Participants control only themselves; never prewrite their outcomes. Private knowledge and motives belong "
     "only to the relevant role, never in shared initial_state or constraints."
+    " Plan only macro goals, essential constraints and observable completion conditions, not a detailed event inventory "
+    "or exhaustive state ontology. Stable lore belongs in background; private knowledge belongs only to its owner. "
+    "A role's objective must not reveal another role's secret, future disclosure or predetermined choice. "
+    "Use semantic completion conditions rather than requiring repeated ritual confirmation unless the user requests authorization."
 )
 
 

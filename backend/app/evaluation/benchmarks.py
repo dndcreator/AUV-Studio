@@ -14,9 +14,9 @@ ASSETS = Path(__file__).resolve().parents[2] / "evals"
 
 
 def load_cases(calibration: bool = False, suite: str = "behavior") -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    if suite not in {"behavior", "visual"} or (calibration and suite != "behavior"):
+    if suite not in {"behavior", "visual", "profiling"} or (calibration and suite != "behavior"):
         raise ValueError("unsupported evaluation suite/calibration")
-    filename = "judge_calibration.json" if calibration else "visual_cases.json" if suite == "visual" else "behavior_cases.json"
+    filename = "judge_calibration.json" if calibration else f"{suite}_cases.json" if suite != "behavior" else "behavior_cases.json"
     data = json.loads((ASSETS / filename).read_text(encoding="utf-8"))
     cases = data["cases"]
     if data.get("version") != (1 if calibration else 2) or not cases or len({row["id"] for row in cases}) != len(cases):

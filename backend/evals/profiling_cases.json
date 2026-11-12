@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "cases": [
+    {
+      "id": "profile_guild_short",
+      "capability": "system",
+      "kind": "historical",
+      "estimated_calls": 18,
+      "requirements": "Diagnose a short real planning and simulation chain. Retain failed and incomplete steps; measure cost and latency without claiming narrative quality, task completion or improvement from one trial.",
+      "input": { "scenario": "fantasy_opening", "rounds": 2, "actions": 3 },
+      "gold": {
+        "version": 1,
+        "review_status": "pending_human",
+        "pass_conditions": ["Physical requests and failures have explicit module, timing and usage provenance."],
+        "fail_conditions": ["Missing attribution is presented as measured module timing or a failed run is hidden."],
+        "allowed_variants": ["The simulation may be incomplete or hit its hard budget; report this without inventing an ending."],
+        "contrast_example": "A fast failed run must not be described as an improvement in completed-task latency.",
+        "origin": "Diagnostic variant of the existing short guild scenario, not an approved behavior Gold Case."
+      }
+    }
+  ]
+}

@@ -18,6 +18,8 @@ from ..player_controls import apply_controls
 from .nodes import HumanInterventionRequired, execute_node, resolve_inputs
 from .provider import OpenAICompatibleProvider, ProviderError
 from .action_consistency import ActionConsistencyError, admit_action, build_consistency_evidence
+from .action_output import normalize_action_output
+from .batch_admission import check_joint
 from .player_turns import PlayerTurnRejected, action_record, player_action_prompt
 from .restore_projection import publish_restored_state
 from .perception import actions_for_node, incoming_interactions, participant_context, participant_roster, public_action
@@ -94,8 +96,9 @@ from .simulation_state import init_simulation_state, update_simulation_state
 
 
 class WorkflowEngine:
-    def __init__(self, provider: OpenAICompatibleProvider) -> None:
+    def __init__(self, provider: OpenAICompatibleProvider, *, experimental_batch: bool = False) -> None:
         self.provider = provider
+        self.experimental_batch = experimental_batch
 
     def _restore_retry_context(
         self,
@@ -446,49 +449,7 @@ class WorkflowEngine:
                 context_snapshot={"episode": round_index, "active_node_ids": activation["active_node_ids"]},
                 prev_hash=last_event_hash,
             )
-            boundary_votes = 0
-            for turn_index, node in enumerate(active_nodes):
-                if action_index >= policy.max_actions or stop_requested:
-                    break
-                if self._stop_requested(db, run.id):
-                    return self._finish_stopped_run(
-                        db,
-                        run,
-                        output={"actions": recent_actions, "simulation": context.get("_simulation", {}), "scene_control": context.get("_scene_control", {})},
-                        last_event_hash=load_last_event_hash(db, run.id)[1],
-                    )
-                await apply_player_boundary(round_index)
-                if self._stop_requested(db, run.id):
-                    break
-                if context.get("_player_controls", {}).get(node.id) == "player_controlled" and any(
-                    context.get("_player_controls", {}).get(other.id) != "player_controlled"
-                    for other in active_nodes[turn_index + 1:]
-                ):
-                    active_nodes.append(node)
-                    continue
-                if not await wait_for_player(node, round_index):
-                    break
-                queued_action = pending_action(db, run.id)
-                if queued_action:
-                    target = json.loads(queued_action.payload_json)["actor_id"]
-                    if target != node.id and target not in [item.id for item in active_nodes[turn_index + 1:]]:
-                        active_nodes.append(next(item for item in entities if item.id == target))
-                    if target != node.id and context.get("_player_controls", {}).get(node.id) == "player_controlled":
-                        active_nodes.append(node)
-                        continue
-                player_request = action_request(db, run.id, node.id, context)
-                if context.get("_player_controls", {}).get(node.id) == "player_controlled" and not player_request:
-                    active_nodes.append(node)
-                    continue
-                director_override_cursor, override_guidance = pull_latest_director_override(
-                    db,
-                    workflow_id=workflow.id,
-                    run_id=run.id,
-                    after_id=director_override_cursor,
-                )
-                if override_guidance:
-                    guidance = override_guidance
-                    context["_global_guidance"] = guidance
+            def prepare_turn(node, offset=0):
                 memories = select_memories_for_node(
                     context.get("_memory", []),
                     node,
@@ -516,7 +477,7 @@ class WorkflowEngine:
                     director_guidance=guidance,
                     background_context=node_context_pack,
                     round_index=round_index,
-                    action_index=action_index + 1,
+                    action_index=action_index + offset + 1,
                     scene_contract=context["_scene_control"]["contract"],
                     progress_feedback=scene_progress_feedback(context["_scene_control"]),
                 )
@@ -545,6 +506,89 @@ class WorkflowEngine:
                     "_global_guidance": guidance,
                     "_interactions": interactions,
                 }
+                return runtime_input, execution_context, context_packet
+
+            boundary_votes = 0
+            batch_results = None
+            prepared = {}
+            if self.experimental_batch and active_nodes:
+                await apply_player_boundary(round_index)
+                if pending_action(db, run.id) or any(
+                    node.type != "agent" or str(node.config.get("execution_mode", "builtin_llm")) != "builtin_llm"
+                    or context.get("_player_controls", {}).get(node.id) == "player_controlled"
+                    for node in active_nodes
+                ):
+                    raise ValueError("Experimental batch supports autonomous builtin agents only")
+                active_nodes = active_nodes[:max(0, policy.max_actions - action_index)]
+                prepared = {node.id: prepare_turn(node, index) for index, node in enumerate(active_nodes)}
+                async def propose_batch(node):
+                    runtime, execution, _ = prepared[node.id]
+                    raw = await execute_node(node=node, node_input=runtime, context=execution, provider=self.provider)
+                    return normalize_action_output(raw, round_index=round_index,
+                                                   action_index=runtime["context"]["action_index"])
+                candidates = await asyncio.gather(*(propose_batch(node) for node in active_nodes), return_exceptions=True)
+                failure = next((item for item in candidates if isinstance(item, BaseException)), None)
+                if failure is not None:
+                    raise failure
+                fields = ("participation", "action", "intent", "observation", "self_update", "turn_delta", "shared_effect_claim", "episode_signal")
+                views = [{"actor_id": node.id, **{key: candidate[key] for key in fields}}
+                         for node, candidate in zip(active_nodes, candidates)]
+                verdicts = await check_joint(self.provider, workflow, context.get("_simulation", {}), recent_actions,
+                                            [prepared[node.id][0] for node in active_nodes], views)
+                if self._stop_requested(db, run.id):
+                    return self._finish_stopped_run(db, run, output={"actions": recent_actions,
+                        "simulation": context.get("_simulation", {}), "scene_control": context.get("_scene_control", {})},
+                        last_event_hash=load_last_event_hash(db, run.id)[1])
+                batch_seq, last_event_hash = emit_event(db, run.id, "batch_checker", "action_batch_checked",
+                    {"round": round_index, "assessments": verdicts}, caused_by="experimental_batch")
+                batch_results = {node.id: (candidate, verdicts[node.id], batch_seq)
+                                 for node, candidate in zip(active_nodes, candidates)}
+            for turn_index, node in enumerate(active_nodes):
+                if action_index >= policy.max_actions or stop_requested:
+                    break
+                if self._stop_requested(db, run.id):
+                    return self._finish_stopped_run(
+                        db,
+                        run,
+                        output={"actions": recent_actions, "simulation": context.get("_simulation", {}), "scene_control": context.get("_scene_control", {})},
+                        last_event_hash=load_last_event_hash(db, run.id)[1],
+                    )
+                if batch_results is None:
+                    await apply_player_boundary(round_index)
+                if self._stop_requested(db, run.id):
+                    break
+                if context.get("_player_controls", {}).get(node.id) == "player_controlled" and any(
+                    context.get("_player_controls", {}).get(other.id) != "player_controlled"
+                    for other in active_nodes[turn_index + 1:]
+                ):
+                    active_nodes.append(node)
+                    continue
+                if not await wait_for_player(node, round_index):
+                    break
+                queued_action = pending_action(db, run.id) if batch_results is None else None
+                if queued_action:
+                    target = json.loads(queued_action.payload_json)["actor_id"]
+                    if target != node.id and target not in [item.id for item in active_nodes[turn_index + 1:]]:
+                        active_nodes.append(next(item for item in entities if item.id == target))
+                    if target != node.id and context.get("_player_controls", {}).get(node.id) == "player_controlled":
+                        active_nodes.append(node)
+                        continue
+                player_request = action_request(db, run.id, node.id, context) if batch_results is None else None
+                if context.get("_player_controls", {}).get(node.id) == "player_controlled" and not player_request:
+                    active_nodes.append(node)
+                    continue
+                if batch_results is None:
+                    director_override_cursor, override_guidance = pull_latest_director_override(
+                        db, workflow_id=workflow.id, run_id=run.id, after_id=director_override_cursor)
+                    if override_guidance:
+                        guidance = override_guidance
+                        context["_global_guidance"] = guidance
+                runtime_input, execution_context, context_packet = prepared[node.id] if batch_results is not None else prepare_turn(node)
+                if batch_results is not None and batch_results[node.id][1]["decision"] != "accept":
+                    emit_event(db, run.id, node.id, "action_checked", {"round": round_index,
+                        "assessment": batch_results[node.id][1]}, caused_by="experimental_batch",
+                        parent_event_ids=[batch_results[node.id][2]])
+                    continue
                 if player_request:
                     runtime_input["_player_request"] = player_request
                     runtime_input["prompt"] += player_action_prompt(player_request["instruction"],
@@ -562,6 +606,7 @@ class WorkflowEngine:
                         caused_by="simulation_turn", execution_context=execution_context,
                         consistency_evidence=build_consistency_evidence(
                             workflow, context.get("_simulation", {}), recent_actions, runtime_input),
+                        batch_admission=batch_results[node.id] if batch_results is not None else None,
                     )
                 except PlayerTurnRejected:
                     if context.get("_player_controls", {}).get(node.id) == "player_controlled":
@@ -802,6 +847,7 @@ class WorkflowEngine:
         caused_by: str,
         execution_context: dict[str, Any] | None = None,
         consistency_evidence: list[dict[str, Any]] | None = None,
+        batch_admission: tuple[dict[str, Any], dict[str, Any], int] | None = None,
     ) -> tuple[dict[str, Any], int, int, str]:
         node_run = NodeRunRecord(
             run_id=run_id,
@@ -861,11 +907,17 @@ class WorkflowEngine:
                         caused_by="action_consistency", prev_hash=last_event_hash,
                     )
 
-                output = await admit_action(
-                    provider=self.provider, runtime_input=runtime_input, evidence=consistency_evidence,
-                    generate=generate, record=record_check,
-                    can_regenerate=not runtime_input.get("_player_request") and node.type == "agent" and str(node.config.get("execution_mode", "builtin_llm")).strip().lower() == "builtin_llm",
-                )
+                if batch_admission is not None:
+                    if not self.experimental_batch or batch_admission[1]["decision"] != "accept":
+                        raise ValueError("Invalid batch admission")
+                    output = batch_admission[0]
+                    record_check({"assessment": batch_admission[1], "batch_event_seq": batch_admission[2]})
+                else:
+                    output = await admit_action(
+                        provider=self.provider, runtime_input=runtime_input, evidence=consistency_evidence,
+                        generate=generate, record=record_check,
+                        can_regenerate=not runtime_input.get("_player_request") and node.type == "agent" and str(node.config.get("execution_mode", "builtin_llm")).strip().lower() == "builtin_llm",
+                    )
             else:
                 output = await generate(runtime_input)
             if runtime_input.get("_player_request") and self._stop_requested(db, run_id):

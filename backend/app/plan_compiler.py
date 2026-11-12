@@ -795,7 +795,6 @@ def _build_entity_profile(
     parts = [
         f"Name/role: {name}",
         f"Focus: {focus}",
-        f"Goal context: {extracted.get('goal', '')}",
     ]
     audience = str(extracted.get("audience", "")).strip()
     if audience:

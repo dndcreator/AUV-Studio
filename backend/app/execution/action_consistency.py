@@ -9,6 +9,7 @@ from typing import Any
 from ..config import settings
 from .action_output import ActionOutputError, normalize_action_output
 from .action_evidence import build_check_prompt, build_consistency_evidence, request_metrics, response_usage
+from .provider import safe_provider_diagnostics
 
 
 CATEGORIES = frozenset({"spacetime", "existence", "capability", "knowledge", "causality", "evidence"})
@@ -132,7 +133,10 @@ async def _check_candidate(
             checked_record["metrics"] = response.get("metrics", {})
         except Exception as exc:
             record({**checked_record, "duration_ms": round((perf_counter() - started) * 1000),
-                    "assessment": {"decision": "error", "error_type": type(exc).__name__}, "diagnostic": str(exc)[:600]})
+                    "assessment": {"decision": "error", "error_type": type(exc).__name__,
+                                   "code": getattr(exc, "code", None)},
+                    "provider_diagnostics": safe_provider_diagnostics(getattr(exc, "diagnostics", None)),
+                    "diagnostic": str(exc)[:600]})
             raise ActionConsistencyError(
                 f"Action consistency check failed ({type(exc).__name__}); candidate was not accepted. Inspect action_checked events."
             ) from exc

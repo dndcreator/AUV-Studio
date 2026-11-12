@@ -15,6 +15,8 @@ os.environ["AUV_DATABASE_URL"] = "sqlite:///" + (Path(_isolated.name) / "suite.d
 os.environ["AUV_MEDIA_OUTPUT_DIR"] = (Path(_isolated.name) / "media").as_posix()
 
 UNIT_FILES = {
+    "test_parallel_trial.py",
+    "test_cost_profiling.py",
     "test_visual_director.py",
     "test_action_consistency.py", "test_action_evidence.py", "test_action_output.py", "test_behavior_validation.py",
     "test_context_book.py", "test_dynamic_state.py", "test_entity_contracts.py", "test_evaluation.py",
@@ -22,9 +24,10 @@ UNIT_FILES = {
     "test_perception.py", "test_plan_generation.py", "test_scene_control.py", "test_simulation_contract_repairs.py",
     "test_state_coding.py", "test_writing_evaluation.py", "test_benchmark_contracts.py", "test_gold_cases.py",
 }
-INTEGRATION_FILES = {"test_player_actions.py", "test_player_interventions.py", "test_api_integration.py", "test_api_surface.py", "test_engine.py", "test_human_api.py",
+INTEGRATION_FILES = {"test_full_batch.py", "test_player_actions.py", "test_player_interventions.py", "test_api_integration.py", "test_api_surface.py", "test_engine.py", "test_human_api.py",
                      "test_media.py", "test_provider.py", "test_queue_manager.py", "test_report_material.py", "test_run_recovery.py"}
 INTEGRATION_CASES = {
+    "test_real_batch_engine_uses_frozen_inputs_memory_director_coder_and_audit_chain",
     "test_real_engine_admits_only_checked_actions_and_keeps_rejected_candidates_out_of_memory_and_reports",
     "test_external_agent_conflict_is_not_automatically_reissued",
     "test_http_external_adapter_uses_strict_admission_without_reissuing_requests",

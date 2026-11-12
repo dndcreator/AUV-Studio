@@ -23,11 +23,62 @@ LOCAL_PROVIDER_DEFAULTS: dict[str, tuple[str, str]] = {
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, message: str, *, retryable: bool = True, code: str = "provider_error", status_code: int | None = None) -> None:
+    def __init__(self, message: str, *, retryable: bool = True, code: str = "provider_error", status_code: int | None = None,
+                 diagnostics: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.retryable = retryable
         self.code = code
         self.status_code = status_code
+        self.diagnostics = safe_provider_diagnostics(diagnostics)
+
+
+def safe_provider_diagnostics(value: Any) -> dict[str, Any]:
+    """Only persist typed counters and known enums, never response text or arbitrary vendor fields."""
+    if not isinstance(value, dict):
+        return {}
+    result = {key: value[key] for key in (
+        "prompt_tokens", "completion_tokens", "reasoning_tokens", "content_chars", "max_tokens",
+        "provider_duration_ms", "provider_attempts",
+    ) if type(value.get(key)) is int and value[key] >= 0}
+    if type(value.get("reasoning_present")) is bool:
+        result["reasoning_present"] = value["reasoning_present"]
+    for key, allowed in {
+        "finish_reason": {"stop", "length", "tool_calls", "function_call", "content_filter",
+                          "insufficient_system_resource", "aborted", "unknown"},
+        "thinking_mode": {"enabled", "disabled", "default"},
+        "reasoning_effort": {"low", "medium", "high", "max", "none"},
+    }.items():
+        item = value.get(key)
+        if isinstance(item, str) and item in allowed:
+            result[key] = item
+    return result
+
+
+def _empty_response_diagnostics(data: dict[str, Any], payload: dict[str, Any], *, ollama: bool) -> dict[str, Any]:
+    choices = data.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    message = data.get("message", {}) if ollama else choice.get("message", {})
+    message = message if isinstance(message, dict) else {}
+    usage = data.get("usage", {})
+    usage = usage if isinstance(usage, dict) else {}
+    details = usage.get("completion_tokens_details", {})
+    details = details if isinstance(details, dict) else {}
+    content = message.get("content") or (data.get("response", "") if ollama else "")
+    reasoning = message.get("thinking") if ollama else message.get("reasoning_content")
+    finish = data.get("done_reason") if ollama else choice.get("finish_reason")
+    result = safe_provider_diagnostics({
+        "finish_reason": finish,
+        "reasoning_present": isinstance(reasoning, str) and bool(reasoning.strip()),
+        "reasoning_tokens": details.get("reasoning_tokens"),
+        "prompt_tokens": data.get("prompt_eval_count") if ollama else usage.get("prompt_tokens"),
+        "completion_tokens": data.get("eval_count") if ollama else usage.get("completion_tokens"),
+        "content_chars": len(content) if isinstance(content, str) else 0,
+        "max_tokens": payload.get("options", {}).get("num_predict") if ollama else payload.get("max_tokens"),
+        "thinking_mode": payload.get("thinking", {}).get("type", "default"),
+        "reasoning_effort": payload.get("reasoning_effort"),
+    })
+    result.setdefault("finish_reason", "unknown")
+    return result
 
 
 class OpenAICompatibleProvider:
@@ -143,12 +194,13 @@ class OpenAICompatibleProvider:
                     message = choice.get("message", {}) if isinstance(choice, dict) else {}
                     content = message.get("content", "") if isinstance(message, dict) else ""
                 if not isinstance(content, str) or not content.strip():
-                    finish_reason = choice.get("finish_reason", "") if protocol_kind != "ollama" and isinstance(choice, dict) else ""
-                    reasoning_only = bool(message.get("reasoning_content")) if protocol_kind != "ollama" and isinstance(message, dict) else False
+                    diagnostics = _empty_response_diagnostics(data, payload, ollama=protocol_kind == "ollama")
+                    diagnostics.update(provider_duration_ms=round((perf_counter() - started) * 1000), provider_attempts=attempt + 1)
                     raise ProviderError(
                         "Provider returned no text content; "
                         f"provider={self.provider_kind}; model={effective_model}; "
-                        f"finish_reason={finish_reason or 'unknown'}; reasoning_only={reasoning_only}"
+                        f"finish_reason={diagnostics['finish_reason']}; reasoning_present={diagnostics['reasoning_present']}",
+                        code="empty_content", diagnostics=diagnostics,
                     )
                 return {"content": content, "raw": data, "metrics": {
                     "provider_duration_ms": round((perf_counter() - started) * 1000),
@@ -175,6 +227,7 @@ class OpenAICompatibleProvider:
             f"Provider request failed: {description}",
             retryable=not isinstance(last_error, ProviderError) or last_error.retryable,
             code=code, status_code=last_error.status_code if isinstance(last_error, ProviderError) else None,
+            diagnostics=last_error.diagnostics if isinstance(last_error, ProviderError) else None,
         ) from last_error
 
 

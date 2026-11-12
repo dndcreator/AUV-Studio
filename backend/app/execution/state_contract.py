@@ -1,0 +1,22 @@
+"""One state/memory boundary shared by normal coding and bounded repair."""
+
+STATE_CODING_CONTRACT = (
+    "STATE IS NOT MEMORY: importance does not turn an event into state. A concept defines a stable entity attribute "
+    "or relation; state is its current value. Discover definitions from the simulation, never a fixed domain list. "
+    "Required subject_id identifies the entity; predicate names its attribute/relation, not a sentence summarizing an "
+    "event. description defines meaning, not history. The private owner is an access boundary, not necessarily the subject. "
+    "Preserve definition, subject and predicate on reuse, including retired IDs. A different attribute needs its own "
+    "definition. Prefer set without repeated schema upserts. Dialogue, reports, observations, beliefs and recollections "
+    "stay in events and the participant's Memory, however important. Stable lore belongs in background/roles. "
+    "EXAMPLES, not predefined fields: 'Iven says the gate is blocked' is event/memory, not gate-status state. "
+    "Mara hearing or believing it is memory, not another concept. An established event actually closing the gate may "
+    "update gate/access_status=closed. A completed transfer may update key/holder; a request does not. Saying 'let us "
+    "go north' is dialogue, not changed location. A route variable is allowed only if the simulation models that "
+    "attribute and evidence establishes its value, not just to preserve a line. Detailed prose need not add state. "
+    "State sets require evidence_kind=action for an established change or engine-authorized player_outcome. "
+    "Claims, observations and inferences are not independent world-change authority; leave uncertain changes uncommitted. "
+    "An accepted utterance proves it was said, not its contents. Confidence and schema approval do not certify truth. "
+    "Small scenes may need no state operations. Never manufacture variables to fill a quota. Under the existing Director "
+    "audit review definition consistency and source support; this in-response review is not independent validation. "
+    "No silent world-rule changes through state_patch. "
+)

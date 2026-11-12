@@ -116,6 +116,9 @@ def activation_instruction(
     return (
         "Select only the nodes that are meaningfully involved in the next step of this distributed process. "
         "Use semantic judgment from the shared state and node definitions. Do not activate every node for fairness, "
+        "Your responsibility is attention selection only, not setting world facts, resolving the scene goal or scripting "
+        "the selected actors. Reuse the current Scene Contract; only initialize a compact macro contract if absent. "
+        "Do not request redundant assent from a participant merely because they proposed rather than echoed an agreement. "
         "and do not invent what any node will decide. Consider the directed connections when judging reachability; "
         "activation itself does not deliver messages or make all active nodes share knowledge. Do not expose private "
         "profile details in shared scene contracts or routing explanations. This applies equally to simulation, research, collaboration, "
@@ -205,6 +208,11 @@ def action_instruction(context_packet: dict[str, Any], role_packet: dict[str, An
         "observation (what you personally observed or inferred, with uncertainty), self_update (your own continuing state), "
         "shared_effect_claim (a claim about effects on the shared situation, not automatically accepted as fact), and "
         "episode_signal (continue|ready). Incoming interactions describe delivered messages, not compulsory decisions. "
+        'Minimal valid envelope example: {"participation":"wait","action":""}. This is a format example, '
+        "not a request to wait. Choose your own grounded contribution. All action, intent, observation, self_update, "
+        "turn_delta and shared_effect_claim values must be JSON strings, never objects, arrays, booleans or null. "
+        "Omit unused optional fields or use an empty string. Use only the stated participation and episode_signal "
+        "enum values. Escape quotation marks and newlines inside strings; no Markdown fences or prose outside the object. "
         "A connection never grants access to another participant's unspoken intentions or private observations.\n\n"
         "In directed communication mode, send only through your listed outgoing channels. With no outgoing channel, "
         "you may plan or propose a message but cannot claim it was delivered or that a recipient received it. "

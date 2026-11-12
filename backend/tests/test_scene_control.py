@@ -29,6 +29,13 @@ CONTRACT = {
 }
 
 
+def test_director_contract_accepts_natural_commitments_without_inventing_consent():
+    prompt = scene_audit_instruction(state={}, scene_control={}, recent_actions=[], round_index=1, max_actions=4)
+    assert "unqualified proposal" in prompt and "conditional, withdrawn, contradicted" in prompt
+    assert "hypothetical is not consent" in prompt
+    assert "not each participant's next line" in prompt
+
+
 def workflow() -> WorkflowDefinition:
     return WorkflowDefinition.model_validate({
         "id": "scene_test", "name": "scene test", "version": 1,

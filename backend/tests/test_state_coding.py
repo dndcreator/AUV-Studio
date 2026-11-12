@@ -56,6 +56,38 @@ def commit(current, proposal, actions):
     return apply_state_batch(current, proposal, actions=actions, seq=len(actions), round_index=1)
 
 
+@pytest.mark.parametrize("retired", [False, True])
+def test_concept_meaning_cannot_be_rewritten_even_by_reactivating_an_old_id(retired):
+    initial, _ = commit(init_dynamic_state({"enabled": True}), patch(action()), [action()])
+    if retired:
+        initial["concepts"]["position"]["status"] = "retired"
+    before = json.loads(json.dumps(initial))
+    proposal = patch(action(20), value="north")
+    proposal["schema_ops"][0]["description"] = "The participant's chosen route, not its position."
+    updated, result = commit(initial, proposal, [action(), action(20)])
+    assert updated == before and result["coding"]["status"] == "pending"
+    assert any(item["reason"] == "immutable_meaning" for item in result["rejected"])
+
+
+def test_same_proposition_can_change_value_without_rewriting_schema():
+    initial, _ = commit(init_dynamic_state({"enabled": True}), patch(action()), [action()])
+    proposal = patch(action(20), value="yard")
+    proposal["schema_ops"] = []
+    updated, result = commit(initial, proposal, [action(), action(20)])
+    assert result["coding"]["status"] == "coded"
+    assert updated["values"]["position"]["value"] == "yard"
+    assert updated["concepts"]["position"]["description"] == initial["concepts"]["position"]["description"]
+
+
+def test_macro_coding_policy_is_shared_by_joint_audit_and_independent_repair():
+    from app.execution.state_contract import STATE_CODING_CONTRACT
+    joint = state_coder_audit_clause([action()])
+    repair = state_coder_instruction(state={}, actions=[action()], round_index=1)
+    assert STATE_CODING_CONTRACT in joint and STATE_CODING_CONTRACT in repair
+    assert "second memory system" in joint and "Small scenes often need no new concepts" in repair
+    assert "not independent validation" in joint
+
+
 def workflow():
     return WorkflowDefinition.model_validate({"id": "coding", "name": "coding", "nodes": [
         {"id": key, "type": kind, "position": {"x": 0, "y": 0}} for key, kind in

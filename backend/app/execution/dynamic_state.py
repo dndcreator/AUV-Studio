@@ -4,6 +4,7 @@ import copy
 import json
 import re
 from typing import Any
+from .state_contract import STATE_CODING_CONTRACT
 
 EVIDENCE_KINDS = frozenset({"claim", "observation", "action", "inference", "player_outcome"})
 
@@ -37,10 +38,11 @@ def dynamic_state_enabled(state: dict[str, Any]) -> bool:
 
 def state_coder_audit_clause(actions: list[dict[str, Any]], *, actions_in_audit: bool = False) -> str:
     return (
+        STATE_CODING_CONTRACT
+        +
         "As a separate State Coder pass in this same response, inspect UNCODED ACTIONS and propose only the smallest "
-        "persistent state needed to constrain future behavior. Do not use predefined domain concepts. Create a concept only "
-        "when forgetting it could change a future action or conclusion, it persists beyond one action, and no existing "
-        "concept represents it. Do not store prose, style, ordinary dialogue, transient gestures, or duplicate facts. "
+        "current entity attributes and relations established by accepted events. Do not use importance as a storage "
+        "criterion and do not create a concept for each claim, recollection or decision utterance. "
         "Turn Delta, Scene Contract, and stagnation verdicts are runtime controls, never durable facts; ignore them as evidence. "
         "Reuse existing concepts. Private knowledge requires visibility=private and owner_id set to the exact source node_id. "
         "Every schema and state operation must cite source_refs as an array of objects, each containing all three "
@@ -50,13 +52,12 @@ def state_coder_audit_clause(actions: list[dict[str, Any]], *, actions_in_audit:
         "Put the proposal in state_patch with explicit schema_ops and state_ops arrays. Each schema operation needs "
         "op=upsert|retire; each state operation needs op=set|unset. Upserts require id, description, scope(global|entity), "
         "owner_id (empty for global), value_type(scalar|text|list|object), visibility(global|private), retention, "
-        "future_relevance, reason, and source_refs. Optional subject_id and predicate index the described entity and "
+        "future_relevance, reason, source_refs and required subject_id and predicate index the described entity and "
         "attribute; reuse existing exact predicates, do not confuse the subject with the private owner. "
         "retention is an object with mode persistent|until_resolved|rounds; "
         "rounds also requires ttl_rounds. State sets require concept_id, value, confidence, reason, source_refs and "
-        "evidence_kind (claim|observation|action|inference). A claim records that the source participant asserted "
-        "something, not that it happened; preserve the speaker and uncertainty in the value/description. "
-        "Observation is a participant's perception; inference is your interpretation; action is what the accepted "
+        "evidence_kind=action. Claims, observations and inferences stay in events/Memory, not new state writes. "
+        "An action is what the accepted "
         "actor itself actually did, not every outcome it claimed. All writes are recorded, never automatically "
         "verified or confirmed. Confidence is not independent proof. Use "
         "empty arrays when nothing deserves persistent state.\n\n"
@@ -81,12 +82,13 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         "new_actions": actions,
     }
     return (
-        "You are the State Coder for an open-ended distributed simulation. Maintain only the smallest source-linked set "
-        "of concepts whose current values can change a future participant's valid action, decision, interpretation, or "
-        "deliverable. There is no domain schema: discover concepts from the actual process. Do not store prose, style, "
+        STATE_CODING_CONTRACT
+        + "You are the State Coder for an open-ended distributed simulation. Maintain only the smallest source-linked set "
+        "of entity attributes and relations grounded in the actual process. There is no domain schema: discover "
+        "definitions from the actual process. Do not store prose, style, "
         "ordinary dialogue, transient gestures, duplicate facts, or details useful only for retelling the current action. "
-        "Before creating a concept, apply three gates: forgetting it could change a future outcome; it persists beyond this "
-        "single action; and no existing concept can represent it. Reuse existing concepts whenever possible. Private knowledge "
+        "Before creating a concept, ensure it defines an attribute/relation rather than an event/memory, and no existing "
+        "definition represents it. Reuse only the same definition. Private attributes "
         "must use visibility=private and owner_id set to the exact source node_id. Every operation must cite exact "
         "source_refs as an array of objects copied from new_actions, each with all three fields node_id, action_index, "
         "event_seq from the SAME action. Do not substitute a concept ID or round number. A participant claim is not automatically "
@@ -94,10 +96,10 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         "uncertainty. Retire a concept only when it is resolved and cannot constrain future behavior. Return JSON only with "
         "schema_ops and state_ops. schema_ops support upsert or retire. state_ops support set or unset. Each upsert requires "
         "id, description, scope(global|entity), owner_id, value_type(scalar|text|list|object), visibility(global|private), "
-        "retention, future_relevance, reason, and source_refs. Optional subject_id/predicate provide an entity/attribute "
+        "retention, future_relevance, reason, source_refs and required subject_id/predicate provide an entity/attribute "
         "index, not executable rules; reuse existing exact names. The subject is not necessarily the private owner. retention must be "
         '{"mode":"persistent|until_resolved|rounds","ttl_rounds":3}. Each state operation requires concept_id, value '
-        "for set, confidence, reason, source_refs and evidence_kind (claim|observation|action|inference). "
+        "for set, confidence, reason, source_refs and evidence_kind=action. "
         "Preserve attribution: claims/observations/inferences are not independently verified facts. An accepted "
         "action is evidence of the actor's own contribution, not proof of another actor's response. "
         "Writes mean recorded, not confirmed; confidence is not verification. Emit empty arrays when nothing deserves persistent state.\n\n"
@@ -105,11 +107,12 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         f"CONTEXT:\n{json.dumps(context, ensure_ascii=False, default=str)}\n\n"
         "OUTPUT SHAPE:\n"
         '{"schema_ops":[{"op":"upsert|retire","id":"concept_id","description":"",'
+        '"subject_id":"entity_id","predicate":"attribute_or_relation",'
         '"scope":"global|entity","owner_id":"","value_type":"scalar|text|list|object",'
         '"visibility":"global|private","retention":{"mode":"until_resolved"},"future_relevance":"",'
         '"reason":"","source_refs":' + reference_example + '}],'
         '"state_ops":[{"op":"set|unset","concept_id":"concept_id","value":null,'
-        '"confidence":0.0,"evidence_kind":"inference","reason":"","source_refs":' + reference_example + '}]}'
+        '"confidence":0.0,"evidence_kind":"action","reason":"","source_refs":' + reference_example + '}]}'
     )
 
 
@@ -202,6 +205,10 @@ def apply_dynamic_state_proposal(
             rejected.append({"kind": "schema", "id": concept_id, "reason": "missing_relevance_evidence"})
             continue
         is_new = concept_id not in concepts or concepts.get(concept_id, {}).get("status") == "retired"
+        prior_meaning = concepts.get(concept_id, {}).get("description")
+        if prior_meaning and description != prior_meaning:
+            rejected.append({"kind": "schema", "id": concept_id, "reason": "immutable_meaning"})
+            continue
         if is_new and new_count >= limits["max_new_per_round"]:
             rejected.append({"kind": "schema", "id": concept_id, "reason": "round_budget"})
             continue
@@ -239,7 +246,7 @@ def apply_dynamic_state_proposal(
         invalid_index = False
         for key, limit in (("subject_id", 120), ("predicate", 80)):
             value = raw.get(key, prior.get(key, ""))
-            if not isinstance(value, str) or len(value) > limit or (key in raw and not value.strip()):
+            if not isinstance(value, str) or len(value) > limit or not value.strip():
                 rejected.append({"kind": "schema", "id": concept_id, "reason": f"invalid_{key}"})
                 invalid_index = True
                 break
@@ -321,6 +328,9 @@ def apply_dynamic_state_proposal(
         evidence_kind = raw.get("evidence_kind", "inference")
         if not isinstance(evidence_kind, str) or evidence_kind not in EVIDENCE_KINDS:
             rejected.append({"kind": "state", "id": concept_id, "reason": "invalid_evidence_kind"})
+            continue
+        if evidence_kind not in {"action", "player_outcome"}:
+            rejected.append({"kind": "state", "id": concept_id, "reason": "memory_evidence_is_not_state"})
             continue
         if (evidence_kind == "player_outcome") != (source_outcome_seq is not None):
             rejected.append({"kind": "state", "id": concept_id, "reason": "invalid_outcome_authority"})
