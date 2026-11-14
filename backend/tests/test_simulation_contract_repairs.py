@@ -105,7 +105,9 @@ def test_real_engine_canonical_context_and_terminal_semantics(decision, complete
         assert f'"remaining_actions": {cap - 2}' in provider.audit_prompts[0]
         terminal = db.query(RunEventRecord).filter_by(run_id=run_id, node_id="run_control").all()
         assert terminal[-1].event == status
-        assert all(row.node_id != "run_control" for row in get_run_checkpoints(db, run_id).checkpoints)
+        checkpoints = get_run_checkpoints(db, run_id).checkpoints
+        assert all(row.node_id != "run_control" or row.event == "execution_checkpoint" for row in checkpoints)
+        assert terminal[-1].seq not in {row.seq for row in checkpoints}
         assert verify_run_audit(db, run_id).verified
     database.dispose()
 

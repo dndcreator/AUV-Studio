@@ -213,6 +213,9 @@ async def drain_intervention(*, db: Session, run: RunRecord, workflow: WorkflowD
     row = _pending(db, run.id)
     if row is None:
         return
+    from .execution.run_definition import pin_workflow, definition_hash
+    pin_workflow(db, run.id, workflow, None)
+    context["_workflow_hash"] = definition_hash(workflow)
     request = _payload(row)
     if request.get("mode") == "action":
         return

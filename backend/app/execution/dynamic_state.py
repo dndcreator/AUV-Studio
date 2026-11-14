@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any
 from .state_contract import STATE_CODING_CONTRACT
+from .world_entities import visible_entities, register_entities
 
 EVIDENCE_KINDS = frozenset({"claim", "observation", "action", "inference", "player_outcome"})
 
@@ -19,6 +20,7 @@ def init_dynamic_state(config: Any) -> dict[str, Any]:
         "version": 1,
         "schema_version": 0,
         "concepts": {},
+        "entities": {},
         "values": {},
         "history": [],
         "last_coded_event_seq": 0,
@@ -44,19 +46,20 @@ def state_coder_audit_clause(actions: list[dict[str, Any]], *, actions_in_audit:
         "current entity attributes and relations established by accepted events. Do not use importance as a storage "
         "criterion and do not create a concept for each claim, recollection or decision utterance. "
         "Turn Delta, Scene Contract, and stagnation verdicts are runtime controls, never durable facts; ignore them as evidence. "
-        "Reuse existing concepts. Private knowledge requires visibility=private and owner_id set to the exact source node_id. "
+        "Reuse existing definitions. Private attributes require visibility=private and owner_id set to the exact source node_id. "
         "Every schema and state operation must cite source_refs as an array of objects, each containing all three "
         "fields node_id, action_index and event_seq copied from the SAME UNCODED ACTION reference below. "
         "Do not use a concept ID, round number or invented event number as a source. Never "
         "promote an unsupported claim into an established fact. scope, owner_id, visibility, and value_type are immutable after creation. "
         "Put the proposal in state_patch with explicit schema_ops and state_ops arrays. Each schema operation needs "
         "op=upsert|retire; each state operation needs op=set|unset. Upserts require id, description, scope(global|entity), "
-        "owner_id (empty for global), value_type(scalar|text|list|object), visibility(global|private), retention, "
+        "owner_id (empty for global), value_type(scalar|text|list|object|entity_ref), visibility(global|private), retention, "
         "future_relevance, reason, source_refs and required subject_id and predicate index the described entity and "
         "attribute; reuse existing exact predicates, do not confuse the subject with the private owner. "
         "retention is an object with mode persistent|until_resolved|rounds; "
         "rounds also requires ttl_rounds. State sets require concept_id, value, confidence, reason, source_refs and "
-        "evidence_kind=action. Claims, observations and inferences stay in events/Memory, not new state writes. "
+        "evidence_kind (claim|observation|action|inference) describes provenance, never sufficient authorization. "
+        "Claims about the world stay in events/Memory unless an authorized change to the bound attribute is established. "
         "An action is what the accepted "
         "actor itself actually did, not every outcome it claimed. All writes are recorded, never automatically "
         "verified or confirmed. Confidence is not independent proof. Use "
@@ -95,11 +98,11 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         "true; encode only what the cited action establishes, use confidence, and preserve "
         "uncertainty. Retire a concept only when it is resolved and cannot constrain future behavior. Return JSON only with "
         "schema_ops and state_ops. schema_ops support upsert or retire. state_ops support set or unset. Each upsert requires "
-        "id, description, scope(global|entity), owner_id, value_type(scalar|text|list|object), visibility(global|private), "
+        "id, description, scope(global|entity), owner_id, value_type(scalar|text|list|object|entity_ref), visibility(global|private), "
         "retention, future_relevance, reason, source_refs and required subject_id/predicate provide an entity/attribute "
         "index, not executable rules; reuse existing exact names. The subject is not necessarily the private owner. retention must be "
         '{"mode":"persistent|until_resolved|rounds","ttl_rounds":3}. Each state operation requires concept_id, value '
-        "for set, confidence, reason, source_refs and evidence_kind=action. "
+        "for set, confidence, reason, source_refs and evidence_kind (claim|observation|action|inference) as provenance. "
         "Preserve attribution: claims/observations/inferences are not independently verified facts. An accepted "
         "action is evidence of the actor's own contribution, not proof of another actor's response. "
         "Writes mean recorded, not confirmed; confidence is not verification. Emit empty arrays when nothing deserves persistent state.\n\n"
@@ -108,7 +111,7 @@ def state_coder_instruction(*, state: dict[str, Any], actions: list[dict[str, An
         "OUTPUT SHAPE:\n"
         '{"schema_ops":[{"op":"upsert|retire","id":"concept_id","description":"",'
         '"subject_id":"entity_id","predicate":"attribute_or_relation",'
-        '"scope":"global|entity","owner_id":"","value_type":"scalar|text|list|object",'
+        '"scope":"global|entity","owner_id":"","value_type":"scalar|text|list|object|entity_ref",'
         '"visibility":"global|private","retention":{"mode":"until_resolved"},"future_relevance":"",'
         '"reason":"","source_refs":' + reference_example + '}],'
         '"state_ops":[{"op":"set|unset","concept_id":"concept_id","value":null,'
@@ -148,7 +151,9 @@ def parse_state_coder_output(content: str, *, director_envelope: bool = False) -
         return {"schema_ops": [], "state_ops": [], "parse_error": "not_object"}
     if parsed.get("parse_error") or any(not isinstance(parsed.get(key), list) for key in ("schema_ops", "state_ops")):
         return {"schema_ops": [], "state_ops": [], "parse_error": "invalid_patch_shape"}
-    return {"schema_ops": parsed["schema_ops"], "state_ops": parsed["state_ops"]}
+    if not isinstance(parsed.get("entity_ops", []), list) or len(parsed.get("entity_ops", [])) > 16:
+        return {"schema_ops": [], "state_ops": [], "parse_error": "invalid_entity_ops"}
+    return {"schema_ops": parsed["schema_ops"], "state_ops": parsed["state_ops"], "entity_ops": parsed.get("entity_ops", [])}
 
 
 def apply_dynamic_state_proposal(
@@ -169,6 +174,9 @@ def apply_dynamic_state_proposal(
     rejected: list[dict[str, str]] = []
     new_count = 0
     allowed_refs = _allowed_source_refs(source_actions)
+    accepted_entities, entity_errors = register_entities(state["entities"], proposal.get("entity_ops", []),
+        lambda value: _validated_source_refs(value, allowed_refs, source_outcome_seq), source_outcome_seq=source_outcome_seq)
+    rejected.extend(entity_errors)
 
     for raw in proposal.get("schema_ops", []):
         if not isinstance(raw, dict):
@@ -239,7 +247,7 @@ def apply_dynamic_state_proposal(
             rejected.append({"kind": "schema", "id": concept_id, "reason": "private_without_owner"})
             continue
         value_type = str(raw.get("value_type", "text")).strip().lower()
-        if value_type not in {"scalar", "text", "list", "object"}:
+        if value_type not in {"scalar", "text", "list", "object", "entity_ref"}:
             value_type = "text"
         prior = concepts.get(concept_id, {}) if isinstance(concepts.get(concept_id), dict) else {}
         index = {}
@@ -258,7 +266,11 @@ def apply_dynamic_state_proposal(
                 index[key] = value.strip()
         if invalid_index:
             continue
-        if not is_new:
+        subject = state["entities"].get(index.get("subject_id"), {})
+        if subject.get("visibility") == "private" and (visibility != "private" or owner_id != subject.get("owner_id")):
+            rejected.append({"kind": "schema", "id": concept_id, "reason": "private_entity_subject"})
+            continue
+        if prior:
             immutable = {"scope": scope, "owner_id": owner_id, "visibility": visibility, "value_type": value_type}
             changed_fields = [key for key, value in immutable.items() if prior.get(key) != value]
             if changed_fields:
@@ -329,14 +341,15 @@ def apply_dynamic_state_proposal(
         if not isinstance(evidence_kind, str) or evidence_kind not in EVIDENCE_KINDS:
             rejected.append({"kind": "state", "id": concept_id, "reason": "invalid_evidence_kind"})
             continue
-        if evidence_kind not in {"action", "player_outcome"}:
-            rejected.append({"kind": "state", "id": concept_id, "reason": "memory_evidence_is_not_state"})
-            continue
         if (evidence_kind == "player_outcome") != (source_outcome_seq is not None):
             rejected.append({"kind": "state", "id": concept_id, "reason": "invalid_outcome_authority"})
             continue
-        if not _value_matches_type(value, str(concept.get("value_type", "text"))):
+        if not _value_matches_type(value, str(concept.get("value_type", "text")), state["entities"]):
             rejected.append({"kind": "state", "id": concept_id, "reason": "value_type_mismatch"})
+            continue
+        target = state["entities"].get(value, {}) if concept.get("value_type") == "entity_ref" and isinstance(value, str) else {}
+        if target.get("visibility") == "private" and (concept.get("visibility") != "private" or concept.get("owner_id") != target.get("owner_id")):
+            rejected.append({"kind": "state", "id": concept_id, "reason": "private_entity_reference"})
             continue
         sources = list(dict.fromkeys(ref["node_id"] for ref in source_refs if ref.get("node_id")))[:12]
         values[concept_id] = {
@@ -372,7 +385,7 @@ def apply_dynamic_state_proposal(
             rejected.append({"kind": "schema", "id": concept_id, "reason": "new_concept_without_value"})
         accepted_schema = [operation for operation in accepted_schema if operation.get("id") not in orphaned_new_ids]
 
-    changed = bool(accepted_schema or accepted_state)
+    changed = bool(accepted_entities or accepted_schema or accepted_state)
     if changed:
         state["version"] = int(state.get("version", 1) or 1) + 1
         if accepted_schema:
@@ -382,9 +395,10 @@ def apply_dynamic_state_proposal(
             {
                 "seq": seq,
                 "schema_ops": accepted_schema,
+                "entity_ops": accepted_entities,
                 "state_ops": accepted_state,
                 "source_refs": _unique_refs(
-                    [ref for op in [*accepted_schema, *accepted_state] for ref in op.get("source_refs", [])]
+                    [ref for op in [*accepted_entities, *accepted_schema, *accepted_state] for ref in op.get("source_refs", [])]
                 ),
             }
         )
@@ -393,6 +407,7 @@ def apply_dynamic_state_proposal(
         "changed": changed,
         "version": state["version"],
         "schema_version": state["schema_version"],
+        "accepted_entity_ops": accepted_entities,
         "accepted_schema_ops": accepted_schema,
         "accepted_state_ops": accepted_state,
         "rejected": rejected,
@@ -446,6 +461,7 @@ def compact_dynamic_state(raw: Any, *, node_id: str = "", include_private: bool 
             visible_values[concept_id] = copy.deepcopy(state["values"][concept_id])
     return {
         "enabled": state["enabled"],
+        "entities": visible_entities(state.get("entities", {}), node_id=node_id, include_private=include_private),
         "version": state["version"],
         "schema_version": state["schema_version"],
         "concepts": visible_concepts,
@@ -471,6 +487,7 @@ def _normalize_dynamic_state(raw: Any) -> dict[str, Any]:
     baseline["version"] = _bounded_int(source.get("version"), 1, 1, 1_000_000)
     baseline["schema_version"] = _bounded_int(source.get("schema_version"), 0, 0, 1_000_000)
     baseline["concepts"] = copy.deepcopy(source.get("concepts", {})) if isinstance(source.get("concepts", {}), dict) else {}
+    baseline["entities"] = copy.deepcopy(source.get("entities", {})) if isinstance(source.get("entities", {}), dict) else {}
     baseline["values"] = copy.deepcopy(source.get("values", {})) if isinstance(source.get("values", {}), dict) else {}
     for value in baseline["values"].values():
         if isinstance(value, dict):
@@ -526,7 +543,9 @@ def _retention_policy(value: Any, round_index: int) -> dict[str, Any] | None:
     return policy
 
 
-def _value_matches_type(value: Any, value_type: str) -> bool:
+def _value_matches_type(value: Any, value_type: str, entities: Any = None) -> bool:
+    if value_type == "entity_ref":
+        return value is None or isinstance(value, str) and isinstance(entities, dict) and value in entities
     if value_type == "scalar":
         return value is None or isinstance(value, (bool, int, float))
     if value_type == "text":

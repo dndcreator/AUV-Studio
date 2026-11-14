@@ -29,6 +29,7 @@ RunEventType = Literal[
     "dynamic_state_failed",
     "action_checked",
     "action_batch_checked",
+    "execution_checkpoint",
     "player_requested",
     "player_outcome",
     "player_applied",

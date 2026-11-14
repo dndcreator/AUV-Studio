@@ -1,6 +1,8 @@
 ﻿# 系统架构说明
 
-最后更新：2026-11-06
+最后更新：2026-11-13
+
+世界设定、统一State、节点Memory、Event Log及分支恢复边界以 [WORLD_SIMULATION_CORE.md](WORLD_SIMULATION_CORE.md) 为准。State不是重要事件摘要；实体登记位于同一Dynamic State内，运行定义快照固定存档使用的设定版本。
 
 ## 1. 总体架构
 

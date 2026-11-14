@@ -36,6 +36,14 @@ class RunRecord(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class RunDefinitionRecord(Base):
+    """Immutable configuration used by a run, separate from editable project definitions."""
+    __tablename__ = "run_definitions"
+
+    run_id: Mapped[str] = mapped_column(String(100), ForeignKey("runs.id"), primary_key=True)
+    definition_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class NodeRunRecord(Base):
     __tablename__ = "node_runs"
 

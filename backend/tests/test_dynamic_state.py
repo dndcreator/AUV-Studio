@@ -61,6 +61,8 @@ def _proposal(
                 "op": "upsert",
                 "id": concept_id,
                 "description": "A newly discovered condition that constrains a later decision.",
+                "subject_id": owner_id or "scene",
+                "predicate": concept_id,
                 "scope": "entity" if owner_id else "global",
                 "owner_id": owner_id,
                 "value_type": value_type,
@@ -218,6 +220,7 @@ def test_private_owner_and_schema_identity_are_protected() -> None:
         owner_id="agent_2",
         source=_source("agent_2", 2, 20),
     )
+    hostile["schema_ops"][0]["subject_id"] = "agent_1"
     updated, result = apply_dynamic_state_proposal(
         state,
         hostile,

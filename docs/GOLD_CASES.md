@@ -1,5 +1,7 @@
 # Gold Cases 与跨模块任务
 
+2026-11-13：按 [WORLD_SIMULATION_CORE.md](WORLD_SIMULATION_CORE.md) 修订5项State Coder案例及Judge判据。State表示实体当前属性/关系，不表示“值得记住的事件”；承诺、请求、观测或主张不因重要而自动生成State。案例保留Gold格式version=1，语义revision=2，仍待人工校准，旧成绩不可直接沿用。未增加本轮付费调用。
+
 2026-11-01补充：独立 `visual` 套件增加地牢/飞船两例，主套件41例不变；Judge校准样本增加视觉正反例后共19例，均仍待人工确认。通过 `app.behavior_eval --suite visual` 显式选择，默认不调用模型。真实试验及费用见 [VISUAL_EVALUATION.md](VISUAL_EVALUATION.md)。
 
 更新：2026-10-29。`backend/evals/behavior_cases.json` v2包含7项独立能力各5例，以及6项系统任务，共41例。本轮增加19项能力案例和3项短系统任务，原有案例也补齐判据。17项Judge校准样本单独维护，不与能力案例混算覆盖。

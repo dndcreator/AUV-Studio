@@ -1,6 +1,10 @@
 ﻿# API 参考
 
-最后更新：2026-11-06
+最后更新：2026-11-13
+
+## 世界存档与继续
+
+`POST /runs/{id}/pause`请求在安全边界停止；`GET /runs/{id}/world-state`读取最近完整检查点的State、实体统计与固定Workflow版本；`POST /runs/{id}/resume`复用已验证rollback队列，返回新的子运行。需要原运行已停止，无法安全确定外部副作用、半批提交或旧运行缺少定义快照时返回409，不自动猜测或重放。运行时不会隐式提高原轮次/行动上限。现有checkpoints/rollback支持`execution_checkpoint`。操作者世界读取可含私有状态，不能当成外接Agent输入；完整字段与限制见 [WORLD_SIMULATION_CORE.md](WORLD_SIMULATION_CORE.md)。
 
 基地址：`http://localhost:8000/api`
 

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.execution.checkpoints import continuous_snapshot, restore_continuous_checkpoint
 from app.execution.dynamic_state import init_dynamic_state, simulation_state_for_node
 from app.execution.engine import WorkflowEngine
+from app.execution.run_definition import definition_hash
 from app.execution.events import emit_event
 from app.execution.simulation_state import init_simulation_state
 from app.execution.state_coding import apply_state_batch
@@ -69,7 +70,7 @@ def test_outcome_is_atomic_source_linked_private_and_rollback_exact(setup):
     after = next(item.seq for item in checkpoints if item.seq > event.seq)
     for checkpoint, expected in ((before, baseline["_simulation"]), (after, result["_simulation"])):
         _, request = build_rollback_request(db, "run", RollbackRequest(event_seq=checkpoint))
-        restored = {}
+        restored = {"_workflow_hash": definition_hash(wf)}
         restore_continuous_checkpoint(restored, request)
         assert restored["_simulation"] == expected
 
@@ -96,7 +97,7 @@ def test_invalid_outcome_never_commits_partial_facts_or_raw_provider_errors(setu
     submit(db)
     provider = BadCoder(output)
     result = drain(db, wf, provider)
-    assert result["_simulation"]["dynamic_state"] == init_dynamic_state({"enabled": True})
+    assert result["_simulation"]["dynamic_state"] == init_simulation_state(wf)["dynamic_state"]
     assert not payloads(db, "player_outcome") and not payloads(db, "player_applied")
     assert payloads(db, "player_rejected") and not payloads(db, "dynamic_state_updated")
     assert "PRIVATE-TRANSPORT-KEY" not in str(payloads(db, "player_rejected"))

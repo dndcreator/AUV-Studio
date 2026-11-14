@@ -17,6 +17,7 @@ from ..player_interventions import action_request, drain_intervention, outcome_f
 from ..player_controls import apply_controls
 from .nodes import HumanInterventionRequired, execute_node, resolve_inputs
 from .provider import OpenAICompatibleProvider, ProviderError
+from .run_definition import pin_workflow, definition_hash
 from .action_consistency import ActionConsistencyError, admit_action, build_consistency_evidence
 from .action_output import normalize_action_output
 from .batch_admission import check_joint
@@ -341,7 +342,7 @@ class WorkflowEngine:
         recent_actions = list(resume.get("actions", [])) if isinstance(resume, dict) and isinstance(resume.get("actions"), list) else []
         context["simulation_actions"] = recent_actions
         simulation_seq = int(resume.get("simulation_seq", 0) or 0) if isinstance(resume, dict) else 0
-        guidance = ""
+        guidance = str(context.get("_global_guidance", ""))
         director_override_cursor = 0
         activation_cursor = 0
         context.setdefault("_scene_control", init_scene_control())
@@ -404,25 +405,24 @@ class WorkflowEngine:
                         caused_by="state_retention",
                         prev_hash=last_event_hash,
                     )
-            activation_response = await self.provider.chat(
-                model="",
-                system_prompt=(
-                    "You route attention in a distributed multi-agent process. Select relevant autonomous nodes by "
-                    "semantic relevance only. You do not decide their actions and you are not a story writer."
-                ),
-                user_prompt=activation_instruction(
-                    state=context.get("_simulation", {}),
-                    recent_actions=recent_actions,
-                    nodes=entities,
-                    scene_control=context["_scene_control"],
-                    connections=communication_edges,
-                ),
-            )
-            activation = parse_activation(
-                str(activation_response.get("content", "")),
-                entities,
-                fallback_index=activation_cursor,
-            )
+            pending_resume = resume.pop("pending_node_ids", None)
+            if pending_resume is not None:
+                activation_response = {}
+                activation = {"active_node_ids": pending_resume, "reason": "restore pending execution", "scene_contract": None}
+            else:
+                activation_response = await self.provider.chat(
+                    model="",
+                    system_prompt=(
+                        "You route attention in a distributed multi-agent process. Select relevant autonomous nodes by "
+                        "semantic relevance only. You do not decide their actions and you are not a story writer."
+                    ),
+                    user_prompt=activation_instruction(
+                        state=context.get("_simulation", {}), recent_actions=recent_actions, nodes=entities,
+                        scene_control=context["_scene_control"], connections=communication_edges,
+                    ),
+                )
+                activation = parse_activation(
+                    str(activation_response.get("content", "")), entities, fallback_index=activation_cursor)
             activation_cursor += 1
             if not context["_scene_control"].get("contract"):
                 context["_scene_control"]["contract"] = normalize_scene_contract(
@@ -438,6 +438,7 @@ class WorkflowEngine:
             active_nodes = [node for node in entities if node.id in active_ids]
             active_nodes.sort(key=lambda node: context.get("_player_controls", {}).get(node.id) == "player_controlled")
             activation["active_node_ids"] = [node.id for node in active_nodes]
+            context["_pending_node_ids"] = [node.id for node in active_nodes]
             _, last_event_hash = emit_event(
                 db,
                 run.id,
@@ -667,6 +668,13 @@ class WorkflowEngine:
                         ),
                     )
 
+                snapshot = continuous_snapshot(context, recent_actions, round_index - 1, action_index, simulation_seq)
+                snapshot["pending_node_ids"] = [item.id for item in active_nodes[turn_index + 1:]]
+                context["_pending_node_ids"] = snapshot["pending_node_ids"]
+                snapshot["batch_partial"] = batch_results is not None and bool(snapshot["pending_node_ids"])
+                emit_event(db, run.id, "run_control", "execution_checkpoint", {"_rollback_snapshot": snapshot},
+                           caused_by="safe_action_boundary", parent_event_ids=[success_seq])
+
             await apply_player_boundary(round_index)
             if self._stop_requested(db, run.id):
                 return self._finish_stopped_run(
@@ -675,7 +683,8 @@ class WorkflowEngine:
                     output={"actions": recent_actions, "simulation": context.get("_simulation", {}), "scene_control": context.get("_scene_control", {})},
                     last_event_hash=load_last_event_hash(db, run.id)[1],
                 )
-            should_audit = bool(active_nodes) and (
+            context.pop("_pending_node_ids", None)
+            should_audit = (bool(active_nodes) or pending_resume is not None) and (
                 boundary_votes > 0
                 or round_index % policy.director_interval_rounds == 0
                 or action_index >= policy.max_actions
@@ -1020,11 +1029,14 @@ class WorkflowEngine:
             run.input_json = serialize(request.input)
             run.output_json = "{}"
             run.error_json = "null"
-            run.retry_from_run_id = request.retry_from_run_id
+            if request.retry_from_run_id != run_id:
+                run.retry_from_run_id = request.retry_from_run_id
             run.retry_from_node = request.retry_from_node
         db.add(run)
         db.commit()
 
+        workflow = pin_workflow(db, run_id, workflow,
+            request.retry_from_run_id if isinstance(request.input.get("_rollback"), dict) else None)
         node_map = {n.id: n for n in workflow.nodes}
         topo = ([node.id for node in workflow.nodes] if build_loop_policy(workflow).enabled
                 else topological_sort(workflow.nodes, workflow.edges))
@@ -1035,11 +1047,12 @@ class WorkflowEngine:
             outgoing[edge.source].append(edge)
 
         context: dict[str, Any] = {"input": request.input}
+        context["_workflow_hash"] = definition_hash(workflow)
         context["_run"] = {"run_id": run_id, "workflow_id": workflow.id}
         context["_environment"] = workflow.environment.model_dump()
         context["_runtime_environment"] = environment_for_runtime(workflow.environment)
         context["_memory"] = memories_at_rollback(
-            load_recent_memories(db, workflow_id=workflow.id, limit=20), request
+            load_recent_memories(db, workflow_id=workflow.id, limit=100, run_id=run_id), request
         )
         context["_simulation"] = init_simulation_state(workflow)
         context["_context_pack"] = build_scene_context_pack(

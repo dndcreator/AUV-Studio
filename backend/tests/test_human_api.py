@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db import Base
 from app.main import human_response_api, run_workflow_api
 from app.models import RunRecord
+from app.execution.run_definition import pin_workflow
 from app.node_specs import get_node_specs
 from app.schemas import HumanResponseRequest, NodePosition, RunRequest, WorkflowDefinition, WorkflowNode
 from app.service import upsert_workflow
@@ -104,6 +105,7 @@ def test_human_response_enqueue_success(monkeypatch: pytest.MonkeyPatch) -> None
     )
     db.commit()
 
+    pin_workflow(db, "run_3", wf, None)
     captured: list[object] = []
 
     class StubQueue:
@@ -127,7 +129,7 @@ def test_human_response_enqueue_success(monkeypatch: pytest.MonkeyPatch) -> None
     assert rec is not None
     assert rec.status == "pending"
     assert rec.error_json == "null"
-    assert rec.retry_from_run_id == "run_3"
+    assert rec.retry_from_run_id is None  # Resuming the same run must not create a cyclic branch parent.
     assert rec.retry_from_node == "hc1"
 
     task = captured[0]
@@ -157,6 +159,7 @@ def test_human_response_queue_full_keeps_waiting(monkeypatch: pytest.MonkeyPatch
     )
     db.commit()
 
+    pin_workflow(db, "run_4", wf, None)
     class FullQueue:
         def enqueue_nowait(self, task):  # type: ignore[no-untyped-def]
             raise asyncio.QueueFull()

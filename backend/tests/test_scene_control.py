@@ -13,6 +13,7 @@ from app.db import Base
 from app.execution.checkpoints import continuous_snapshot, restore_continuous_checkpoint
 from app.execution.director_policy import assess_output_quality
 from app.execution.engine import WorkflowEngine
+from app.execution.run_definition import definition_hash, workflow_for_run
 from app.execution.scene_control import apply_scene_audit, init_scene_control, normalize_scene_contract, scene_audit_instruction, scene_progress_feedback
 from app.execution.action_output import normalize_action_output
 from app.evaluation.quality import evaluate_run
@@ -181,7 +182,7 @@ def test_real_engine_protocol_checks_false_delta_without_extra_calls_and_can_sto
         assert sum(item.event == "episode_audited" for item in checkpoints.checkpoints) == 2
         assert all(item.summary for item in checkpoints.checkpoints if item.event == "episode_audited")
         _, rollback = build_rollback_request(db, run_id, RollbackRequest(event_seq=audits[0].seq))
-        restored: dict = {}
+        restored: dict = {"_workflow_hash": definition_hash(workflow_for_run(db, run_id))}
         restore_continuous_checkpoint(restored, rollback)
         assert restored["_scene_control"]["contract"] == CONTRACT
         assert restored["_scene_control"]["stagnation"] == 1
@@ -302,7 +303,7 @@ def test_real_engine_supplies_goal_feedback_and_rolls_back_the_counter_without_e
         assert "PRIVATE-PLAN" not in json.dumps(scene_progress_feedback(output["scene_control"]))
         audits = db.query(RunEventRecord).filter_by(run_id=run_id, event="episode_audited").order_by(RunEventRecord.seq).all()
         _, rollback = build_rollback_request(db, run_id, RollbackRequest(event_seq=audits[2].seq))
-        restored = {}
+        restored = {"_workflow_hash": definition_hash(workflow_for_run(db, run_id))}
         restore_continuous_checkpoint(restored, rollback)
         assert restored["_scene_control"]["goal_stagnation"] == 3
         assert scene_progress_feedback(restored["_scene_control"])["level"] == "refocus"

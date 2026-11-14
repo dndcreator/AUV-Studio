@@ -395,7 +395,7 @@
       "capability": "state_coder",
       "kind": "positive",
       "estimated_calls": 1,
-      "requirements": "Retain the future Friday commitment with an exact source; do not preserve a sigh or gaze as durable state.",
+      "requirements": "A promise and gesture belong to events/Memory, regardless of importance. With no established entity-attribute change, return empty state operations.",
       "input": {
         "actions": [
           {
@@ -409,21 +409,23 @@
       },
       "gold": {
         "version": 1,
+        "revision": 2,
         "review_status": "pending_human",
         "reviewed_by": "",
         "pass_conditions": [
-          "Capture a sourced Friday return commitment.",
-          "Avoid preserving a sigh or gaze as a durable constraint."
+          "A promise and gesture belong to events/Memory, regardless of importance. With no established entity-attribute change, return empty state operations.",
+          "Every actual state write binds an entity attribute or relation and cites exact accepted-event references."
         ],
         "fail_conditions": [
-          "Lose the commitment while retaining gestures.",
-          "Invent acceptance or key transfer."
+          "Promote a report, promise, fear or request into objective state merely because it is important.",
+          "Change concept meaning, invent consent or write another participant private knowledge."
         ],
         "allowed_variants": [
-          "Dynamic concept names and compact representations may differ."
+          "Empty operations when no attribute/relation change is established.",
+          "Any grounded definition/ID is valid; no predefined domain field list."
         ],
-        "contrast_example": "Failure: store gaze/mood but forget the dated promise.",
-        "origin": "existing fixed behavior fixture"
+        "contrast_example": "Memory preserves what was said; State represents an established current attribute, not a summary of the exchange.",
+        "origin": "State/memory boundary revision, 2026-11-13; pending human calibration, no new model run."
       }
     },
     {
@@ -431,7 +433,7 @@
       "capability": "state_coder",
       "kind": "negative",
       "estimated_calls": 1,
-      "requirements": "A's allegation that B stole a key is not verified theft. A's private fear belongs only to A; no new private state owned by B.",
+      "requirements": "Allegations and private fear remain participant Memory/events, not objective theft or a new world-state concept. Do not create B-owned private knowledge.",
       "input": {
         "actions": [
           {
@@ -446,21 +448,23 @@
       },
       "gold": {
         "version": 1,
+        "revision": 2,
         "review_status": "pending_human",
         "reviewed_by": "",
         "pass_conditions": [
-          "Keep theft as A's unverified allegation.",
-          "Private fear belongs only to A."
+          "Allegations and private fear remain participant Memory/events, not objective theft or a new world-state concept. Do not create B-owned private knowledge.",
+          "Every actual state write binds an entity attribute or relation and cites exact accepted-event references."
         ],
         "fail_conditions": [
-          "Record a verified theft.",
-          "Create B-owned private state from A's claims."
+          "Promote a report, promise, fear or request into objective state merely because it is important.",
+          "Change concept meaning, invent consent or write another participant private knowledge."
         ],
         "allowed_variants": [
-          "Relevant allegation may be retained with attribution or omitted."
+          "Empty operations when no attribute/relation change is established.",
+          "Any grounded definition/ID is valid; no predefined domain field list."
         ],
-        "contrast_example": "Failure: B certainly stole the key.",
-        "origin": "existing fixed behavior fixture"
+        "contrast_example": "Memory preserves what was said; State represents an established current attribute, not a summary of the exchange.",
+        "origin": "State/memory boundary revision, 2026-11-13; pending human calibration, no new model run."
       }
     },
     {
@@ -1223,7 +1227,7 @@
       "capability": "state_coder",
       "kind": "boundary",
       "estimated_calls": 1,
-      "requirements": "Explicit empty schema_ops/state_ops is valid when no durable change exists. Avoid encoding prose or momentary bodily details.",
+      "requirements": "No entity attribute or relation changed. Return empty operations; do not create concepts for prose or observations.",
       "input": {
         "actions": [
           {
@@ -1237,21 +1241,23 @@
       },
       "gold": {
         "version": 1,
+        "revision": 2,
         "review_status": "pending_human",
         "reviewed_by": "",
         "pass_conditions": [
-          "Explicit empty schema_ops/state_ops is valid when no durable change exists.",
-          "Avoid encoding prose or momentary bodily details."
+          "No entity attribute or relation changed. Return empty operations; do not create concepts for prose or observations.",
+          "Every actual state write binds an entity attribute or relation and cites exact accepted-event references."
         ],
         "fail_conditions": [
-          "Create persistent blink, gaze, heartbeat or mood concepts.",
-          "Invent a goal or relationship change."
+          "Promote a report, promise, fear or request into objective state merely because it is important.",
+          "Change concept meaning, invent consent or write another participant private knowledge."
         ],
         "allowed_variants": [
-          "A justified empty batch need not create any state."
+          "Empty operations when no attribute/relation change is established.",
+          "Any grounded definition/ID is valid; no predefined domain field list."
         ],
-        "contrast_example": "Pass: two explicit empty operation arrays.",
-        "origin": "curated adversarial or boundary fixture"
+        "contrast_example": "Memory preserves what was said; State represents an established current attribute, not a summary of the exchange.",
+        "origin": "State/memory boundary revision, 2026-11-13; pending human calibration, no new model run."
       }
     },
     {
@@ -1259,7 +1265,7 @@
       "capability": "state_coder",
       "kind": "historical",
       "estimated_calls": 1,
-      "requirements": "Record A's durable revised commitment with exact event1/action1 attribution. Do not assign the change to a different owner or preserve obsolete intent as current.",
+      "requirements": "A completes placing their key on the table. Record a source-linked holder/location relation, not an important-action narrative, using stable subject/predicate bindings.",
       "input": {
         "actions": [
           {
@@ -1267,28 +1273,58 @@
             "round": 1,
             "action_index": 1,
             "event_seq": 1,
-            "action": "I publicly withdraw my old intention to leave and commit to staying through Friday.",
-            "self_update": "I now intend to stay through Friday."
+            "action": "I place my own key on the table in front of me.",
+            "self_update": ""
           }
-        ]
+        ],
+        "state": {
+          "dynamic_state": {
+            "entities": {
+              "key": {
+                "id": "key",
+                "status": "active",
+                "visibility": "global",
+                "kind": "artifact"
+              },
+              "table": {
+                "id": "table",
+                "status": "active",
+                "visibility": "global",
+                "kind": "artifact"
+              },
+              "a": {
+                "id": "a",
+                "status": "active",
+                "visibility": "global",
+                "kind": "individual"
+              }
+            },
+            "enabled": true
+          },
+          "task_contract": {
+            "shared_background": "A holds their own key beside a reachable table."
+          }
+        }
       },
       "gold": {
         "version": 1,
+        "revision": 2,
         "review_status": "pending_human",
         "reviewed_by": "",
         "pass_conditions": [
-          "Record A's durable revised commitment with exact event1/action1 attribution.",
-          "Do not assign the change to a different owner or preserve obsolete intent as current."
+          "A completes placing their key on the table. Record a source-linked holder/location relation, not an important-action narrative, using stable subject/predicate bindings.",
+          "Every actual state write binds an entity attribute or relation and cites exact accepted-event references."
         ],
         "fail_conditions": [
-          "Write B's private state.",
-          "Keep both contradictory current commitments without qualification."
+          "Promote a report, promise, fear or request into objective state merely because it is important.",
+          "Change concept meaning, invent consent or write another participant private knowledge."
         ],
         "allowed_variants": [
-          "Any dynamic concept ID is valid; no prescribed schema vocabulary."
+          "Empty operations when no attribute/relation change is established.",
+          "Any grounded definition/ID is valid; no predefined domain field list."
         ],
-        "contrast_example": "Failure: owner_id=b or leave/stay both unqualified current truth.",
-        "origin": "historical regression, see docs/GOLD_CASES.md"
+        "contrast_example": "Memory preserves what was said; State represents an established current attribute, not a summary of the exchange.",
+        "origin": "State/memory boundary revision, 2026-11-13; pending human calibration, no new model run."
       }
     },
     {
@@ -1296,7 +1332,7 @@
       "capability": "state_coder",
       "kind": "negative",
       "estimated_calls": 1,
-      "requirements": "Do not change key possession or record consent. A pending request may be recorded only if it has future relevance and preserves its unresolved nature.",
+      "requirements": "A request without transfer or consent remains events/Memory. Do not change possession or create a pending-request world-state concept merely because the request matters.",
       "input": {
         "actions": [
           {
@@ -1310,21 +1346,23 @@
       },
       "gold": {
         "version": 1,
+        "revision": 2,
         "review_status": "pending_human",
         "reviewed_by": "",
         "pass_conditions": [
-          "Do not change key possession or record consent.",
-          "A pending request may be recorded only if it has future relevance and preserves its unresolved nature."
+          "A request without transfer or consent remains events/Memory. Do not change possession or create a pending-request world-state concept merely because the request matters.",
+          "Every actual state write binds an entity attribute or relation and cites exact accepted-event references."
         ],
         "fail_conditions": [
-          "Record B handed over the key.",
-          "Promote a request into an accomplished transfer."
+          "Promote a report, promise, fear or request into objective state merely because it is important.",
+          "Change concept meaning, invent consent or write another participant private knowledge."
         ],
         "allowed_variants": [
-          "Empty batch or a sourced pending-request concept."
+          "Empty operations when no attribute/relation change is established.",
+          "Any grounded definition/ID is valid; no predefined domain field list."
         ],
-        "contrast_example": "Failure: key_owner=a based only on A's question.",
-        "origin": "curated adversarial or boundary fixture"
+        "contrast_example": "Memory preserves what was said; State represents an established current attribute, not a summary of the exchange.",
+        "origin": "State/memory boundary revision, 2026-11-13; pending human calibration, no new model run."
       }
     },
     {

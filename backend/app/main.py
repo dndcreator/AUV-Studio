@@ -28,6 +28,7 @@ from .player_interventions import PlayerIntervention, enqueue_intervention, inte
 from .player_controls import ControlRequest, request_control
 from .player_history import intervention_history
 from .execution.dynamic_state import compact_dynamic_state
+from .execution.run_definition import workflow_for_run
 from .media_service import (
     MediaServiceError,
     download_media_asset,
@@ -41,6 +42,7 @@ from .node_specs import get_interaction_modes, get_node_specs
 from .observability import perf_tracker
 from .queue_manager import QueueTask, RunQueueManager
 from .run_lifecycle import recover_interrupted_runs
+from .stored_world import read_world, resume_checkpoint_seq
 from .runtime_lock import runtime_lease
 from .schemas import (
     AuditVerifyResponse,
@@ -511,7 +513,10 @@ def get_run_checkpoints_api(
 @app.post("/api/runs/{run_id}/rollback", response_model=RollbackResponse)
 async def rollback_run_api(run_id: str, body: RollbackRequest, db: Session = Depends(get_db)) -> RollbackResponse:
     workflow_id, request = build_rollback_request(db, run_id=run_id, request=body)
-    workflow = get_workflow(db, workflow_id)
+    try:
+        workflow = workflow_for_run(db, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     new_run_id = f"run_{uuid.uuid4().hex[:12]}"
     rec = RunRecord(
         id=new_run_id,
@@ -556,7 +561,10 @@ async def human_response_api(run_id: str, body: HumanResponseRequest, db: Sessio
     if not checkpoint_node:
         raise HTTPException(status_code=400, detail="node_id is required for human response")
 
-    workflow = get_workflow(db, source.workflow_id)
+    try:
+        workflow = workflow_for_run(db, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     request = RunRequest(
         input={
             "_human_response": {
@@ -572,7 +580,6 @@ async def human_response_api(run_id: str, body: HumanResponseRequest, db: Sessio
     _enqueue_or_429(run_id=run_id, workflow=workflow, request=request)
     source.status = "pending"
     source.error_json = "null"
-    source.retry_from_run_id = run_id
     source.retry_from_node = checkpoint_node
     source.ended_at = None
     db.add(source)
@@ -609,6 +616,22 @@ def player_history_api(run_id: str, before_seq: int | None = Query(default=None,
 @app.post("/api/runs/{run_id}/stop")
 def stop_run_api(run_id: str, db: Session = Depends(get_db)) -> dict[str, str]:
     return request_run_stop(db, run_id)
+
+
+@app.post("/api/runs/{run_id}/pause")
+def pause_world_api(run_id: str, db: Session = Depends(get_db)):
+    return request_run_stop(db, run_id)
+
+
+@app.get("/api/runs/{run_id}/world-state")
+def read_world_api(run_id: str, db: Session = Depends(get_db)):
+    return read_world(db, run_id)
+
+
+@app.post("/api/runs/{run_id}/resume", response_model=RollbackResponse)
+async def resume_world_api(run_id: str, db: Session = Depends(get_db)):
+    seq = resume_checkpoint_seq(db, run_id)
+    return await rollback_run_api(run_id, RollbackRequest(event_seq=seq, reason="resume saved world"), db)
 
 
 @app.get("/api/runs/{run_id}", response_model=RunDetail)

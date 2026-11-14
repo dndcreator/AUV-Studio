@@ -22,7 +22,7 @@ RUBRICS = {
     "director": {"progress": "Separates novelty from movement toward actual exit conditions at the requested scale.",
                  "autonomy": "Manages scene conditions without choosing actors' actions or outcomes.",
                  "completion": "Does not certify completion from stopping, limits or the actor's unsupported self-evaluation."},
-    "state_coder": {"relevance": "Stores only durable, future-constraining changes, not transient gestures or prose.",
+    "state_coder": {"relevance": "Models current entity attributes/relations, not important-event summaries, dialogue or participant memories. Importance alone never makes information state.",
                     "source": "Every value is supported by actual source actions and preserves claim/observation/inference distinctions.",
                     "privacy": "Private state is owned by the correct entity and never promoted to shared fact."},
     "memory": {"continuity": "Uses relevant prior facts, corrections and commitments in the present decision.",

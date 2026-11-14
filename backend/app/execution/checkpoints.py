@@ -78,13 +78,18 @@ def continuous_snapshot(
 ) -> dict[str, Any]:
     return {
         "simulation_state": copy.deepcopy(context.get("_simulation", {})),
+        "workflow_hash": context.get("_workflow_hash", ""),
         "actions": copy.deepcopy(actions),
         "round": round_index,
         "action_index": action_index,
         "simulation_seq": simulation_seq,
         "scene_control": copy.deepcopy(context.get("_scene_control", {})),
+        "global_guidance": str(context.get("_global_guidance", "")),
         "player_controls": copy.deepcopy(context.get("_player_controls", {})),
         "player_control_cursor": context.get("_player_control_cursor", 0),
+        **({"pending_node_ids": copy.deepcopy(context["_continuous_resume"]["pending_node_ids"])}
+           if context.get("_continuous_resume", {}).get("pending_node_ids") is not None else {}),
+        **({"pending_node_ids": copy.deepcopy(context["_pending_node_ids"])} if "_pending_node_ids" in context else {}),
     }
 
 
@@ -93,11 +98,14 @@ def restore_continuous_checkpoint(context: dict[str, Any], request: RunRequest) 
     snapshot = rollback.get("continuous_snapshot") if isinstance(rollback, dict) else None
     if not isinstance(snapshot, dict):
         return
+    if snapshot.get("workflow_hash") and context.get("_workflow_hash") != snapshot["workflow_hash"]:
+        raise ValueError("Saved world definition does not match its execution checkpoint")
     simulation_state = snapshot.get("simulation_state")
     if isinstance(simulation_state, dict):
         context["_simulation"] = normalize_simulation_state(simulation_state)
     if isinstance(snapshot.get("scene_control"), dict):
         context["_scene_control"] = copy.deepcopy(snapshot["scene_control"])
+    context["_global_guidance"] = str(snapshot.get("global_guidance", ""))
     context["_player_controls"] = copy.deepcopy(snapshot.get("player_controls", {}))
     context["_player_control_cursor"] = int(snapshot.get("player_control_cursor", 0) or 0)
     context["_continuous_resume"] = {
@@ -105,6 +113,7 @@ def restore_continuous_checkpoint(context: dict[str, Any], request: RunRequest) 
         "round": int(snapshot.get("round", 0) or 0),
         "action_index": int(snapshot.get("action_index", 0) or 0),
         "simulation_seq": int(snapshot.get("simulation_seq", 0) or 0),
+        "pending_node_ids": snapshot.get("pending_node_ids"),
     }
 
 

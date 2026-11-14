@@ -79,12 +79,22 @@ def test_same_proposition_can_change_value_without_rewriting_schema():
     assert updated["concepts"]["position"]["description"] == initial["concepts"]["position"]["description"]
 
 
+def test_retired_definition_cannot_change_type_even_with_identical_description():
+    initial, _ = commit(init_dynamic_state({"enabled": True}), patch(action()), [action()])
+    initial["concepts"]["position"]["status"] = "retired"
+    proposal = patch(action(20), value={"new": "meaning"})
+    proposal["schema_ops"][0]["value_type"] = "object"
+    updated, result = commit(initial, proposal, [action(), action(20)])
+    assert updated == initial and result["coding"]["status"] == "pending"
+    assert any(item["reason"].startswith("immutable_fields:") for item in result["rejected"])
+
+
 def test_macro_coding_policy_is_shared_by_joint_audit_and_independent_repair():
     from app.execution.state_contract import STATE_CODING_CONTRACT
     joint = state_coder_audit_clause([action()])
     repair = state_coder_instruction(state={}, actions=[action()], round_index=1)
     assert STATE_CODING_CONTRACT in joint and STATE_CODING_CONTRACT in repair
-    assert "second memory system" in joint and "Small scenes often need no new concepts" in repair
+    assert "STATE IS NOT MEMORY" in joint and "Small scenes may need no state operations" in repair
     assert "not independent validation" in joint
 
 

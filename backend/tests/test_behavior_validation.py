@@ -94,6 +94,7 @@ def test_cli_does_not_treat_missing_coverage_as_success(monkeypatch, status, cod
 
 def proposal(concept, value, source, owner=""):
     return {"id": concept, "op": "upsert", "description": "A durable constraint", "scope": "entity" if owner else "global",
+            "subject_id": owner or "scene", "predicate": concept,
             "owner_id": owner, "value_type": "text", "visibility": "private" if owner else "global",
             "retention": {"mode": "persistent"}, "future_relevance": "Constrains later decisions", "reason": "Recorded from a specific action",
             "source_refs": [source]}, {"op": "set", "concept_id": concept, "value": value, "confidence": 1,

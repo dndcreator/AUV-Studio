@@ -5,6 +5,7 @@ from typing import Any
 
 from ..schemas import WorkflowDefinition, WorkflowNode
 from .dynamic_state import init_dynamic_state
+from .world_entities import initial_entities
 
 STATE_SCHEMA_VERSION = 2
 _WORLD_COORDINATE_KEYS = ("current_time", "current_location", "temporal_scope", "spatial_scope")
@@ -78,6 +79,7 @@ def init_simulation_state(workflow: WorkflowDefinition) -> dict[str, Any]:
             "enabled": str(raw.get("execution_model", "")).strip().lower() == "continuous",
         }
     dynamic_state = init_dynamic_state(dynamic_state_config)
+    dynamic_state["entities"] = initial_entities(workflow)
     state = {
         "version": STATE_SCHEMA_VERSION,
         "mode": str(raw.get("mode", "simulation")),

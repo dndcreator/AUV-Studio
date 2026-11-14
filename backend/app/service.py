@@ -554,8 +554,8 @@ def get_run_checkpoints(db: Session, run_id: str, limit: int = 80) -> RunCheckpo
         db.query(RunEventRecord)
         .filter(
             RunEventRecord.run_id == run_id,
-            RunEventRecord.event.in_(["succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited", "nodes_activated", "player_applied", "player_control_changed", "state_restored", "player_checkpoint"]),
-            (RunEventRecord.node_id != "run_control") | (RunEventRecord.event == "state_restored"),
+            RunEventRecord.event.in_(["succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited", "nodes_activated", "player_applied", "player_control_changed", "state_restored", "player_checkpoint", "execution_checkpoint"]),
+            (RunEventRecord.node_id != "run_control") | RunEventRecord.event.in_(["state_restored", "execution_checkpoint"]),
         )
         .order_by(RunEventRecord.seq.desc())
         .limit(max(1, min(limit, 300)))
@@ -594,7 +594,7 @@ def build_rollback_request(db: Session, run_id: str, request: RollbackRequest) -
     row = db.query(RunEventRecord).filter(RunEventRecord.run_id == run_id, RunEventRecord.seq == request.event_seq).first()
     if row is None:
         raise HTTPException(status_code=404, detail="checkpoint event not found")
-    if row.event not in {"succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited", "nodes_activated", "player_applied", "player_control_changed", "state_restored", "player_checkpoint"}:
+    if row.event not in {"succeeded", "waiting_human", "failed", "dynamic_state_updated", "episode_audited", "nodes_activated", "player_applied", "player_control_changed", "state_restored", "player_checkpoint", "execution_checkpoint"}:
         raise HTTPException(status_code=400, detail="event is not rollback-capable")
     payload = _safe_json_loads(row.payload_json, {})
     if row.event == "nodes_activated" and not isinstance(payload.get("_rollback_snapshot"), dict):

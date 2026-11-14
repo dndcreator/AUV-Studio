@@ -24,7 +24,7 @@ UNIT_FILES = {
     "test_perception.py", "test_plan_generation.py", "test_scene_control.py", "test_simulation_contract_repairs.py",
     "test_state_coding.py", "test_writing_evaluation.py", "test_benchmark_contracts.py", "test_gold_cases.py",
 }
-INTEGRATION_FILES = {"test_full_batch.py", "test_player_actions.py", "test_player_interventions.py", "test_api_integration.py", "test_api_surface.py", "test_engine.py", "test_human_api.py",
+INTEGRATION_FILES = {"test_world_architecture.py", "test_full_batch.py", "test_player_actions.py", "test_player_interventions.py", "test_api_integration.py", "test_api_surface.py", "test_engine.py", "test_human_api.py",
                      "test_media.py", "test_provider.py", "test_queue_manager.py", "test_report_material.py", "test_run_recovery.py"}
 INTEGRATION_CASES = {
     "test_real_batch_engine_uses_frozen_inputs_memory_director_coder_and_audit_chain",

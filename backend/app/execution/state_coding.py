@@ -56,6 +56,7 @@ def apply_state_batch(current: dict[str, Any], proposal: Any, *, actions: list[d
     if not committed:
         next_state = baseline
         result = {**result, "changed": False, "version": current.get("version", 1),
+                  "accepted_entity_ops": [],
                   "schema_version": current.get("schema_version", 0), "accepted_schema_ops": [], "accepted_state_ops": [],
                   "active_concepts": sum(1 for value in current.get("concepts", {}).values()
                                          if isinstance(value, dict) and value.get("status") == "active")}

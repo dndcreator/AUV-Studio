@@ -5,28 +5,47 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from ..models import MemoryRecord
+from ..models import MemoryRecord, RunRecord, RunDefinitionRecord
 from ..schemas import RunRequest, WorkflowNode
 
 MemoryKind = Literal["fact", "character"]
 _MEMORY_KINDS = {"fact", "character"}
 
 
-def load_recent_memories(db: Session, workflow_id: str, limit: int = 20) -> list[dict[str, Any]]:
+def load_recent_memories(db: Session, workflow_id: str, limit: int = 20, *, run_id: str) -> list[dict[str, Any]]:
+    lineage: dict[str, int | None] = {}
+    cursor, cutoff = run_id, None
+    while cursor:
+        if cursor in lineage:
+            raise ValueError("Cyclic run ancestry")
+        run = db.get(RunRecord, cursor)
+        if run is None or run.workflow_id != workflow_id:
+            raise ValueError("Memory ancestry must belong to the same workflow")
+        lineage[cursor] = cutoff
+        saved = db.get(RunDefinitionRecord, cursor)
+        frozen = json.loads(saved.definition_json).get("_lineage") if saved else None
+        source = json.loads(run.input_json).get("_rollback", {})
+        boundary = frozen.get("parent_event_seq") if isinstance(frozen, dict) else source.get("event_seq") if isinstance(source, dict) else None
+        if type(boundary) is int:
+            cutoff = boundary if cutoff is None else min(cutoff, boundary)
+        cursor = frozen.get("parent_run_id") if isinstance(frozen, dict) else run.retry_from_run_id
     rows = (
         db.query(MemoryRecord)
-        .filter(MemoryRecord.workflow_id == workflow_id)
+        .filter(MemoryRecord.workflow_id == workflow_id, MemoryRecord.run_id.in_(lineage))
         .order_by(MemoryRecord.id.desc())
-        .limit(max(1, min(limit, 200)))
-        .all()
+        .yield_per(100)
     )
     memories: list[dict[str, Any]] = []
-    for row in reversed(rows):
+    for row in rows:
         try:
             meta = json.loads(row.tags_json)
         except (TypeError, json.JSONDecodeError):
             continue
         if not isinstance(meta, dict):
+            continue
+        boundary = lineage[row.run_id]
+        seq = meta.get("source_event_seq")
+        if boundary is not None and (type(seq) is not int or seq > boundary):
             continue
         kind = str(meta.get("kind", ""))
         if kind not in _MEMORY_KINDS:
@@ -49,7 +68,9 @@ def load_recent_memories(db: Session, workflow_id: str, limit: int = 20) -> list
                 "created_at": row.created_at.isoformat() if row.created_at else "",
             }
         )
-    return memories
+        if len(memories) >= max(1, min(limit, 200)):
+            break
+    return list(reversed(memories))
 
 
 def memories_at_rollback(memories: list[dict[str, Any]], request: RunRequest) -> list[dict[str, Any]]:
